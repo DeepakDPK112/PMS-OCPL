@@ -26,3 +26,7 @@ dist-ssr/
 
 # Local Claude Code settings
 .claude/settings.local.json
+
+.vercel
+.env*
+!.env.example
