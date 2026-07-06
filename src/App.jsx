@@ -29,9 +29,9 @@ const USER_ROLE = {
   manager: { label: "Manager", color: "bg-sky-100 text-sky-700 border-sky-200" },
   hr: { label: "HR", color: "bg-violet-100 text-violet-700 border-violet-200" },
 };
-const REQUIRED_FIELDS = ["name", "employeeId", "department", "designation", "email", "reportingManager", "reportingManagerId", "reportingManagerEmail"];
-const USER_COLUMNS = ["Employee Name", "Employee ID", "Email ID", "Department", "Designation", "Role", "Reporting Manager Name", "Reporting Manager Emp ID", "Reporting Manager Email ID", "Password"];
-const EMPTY_USER = { name: "", employeeId: "", email: "", department: "", designation: "", role: "employee", reportingManager: "", reportingManagerId: "", reportingManagerEmail: "", password: "" };
+const REQUIRED_FIELDS = ["name", "employeeId", "department", "designation", "email", "reportingManagerId"];
+const USER_COLUMNS = ["Employee Name", "Employee ID", "Email ID", "Department", "Designation", "Role", "Reporting Manager Emp ID", "Password"];
+const EMPTY_USER = { name: "", employeeId: "", email: "", department: "", designation: "", role: "employee", reportingManagerId: "", password: "" };
 
 const KRA_TEMPLATE = [
   { id: 1, kra: "Adhere to SOP", kpis: [
@@ -686,7 +686,7 @@ function TeamPage({ me, users, cycles, getRecord, setRecord, onSaved, approvedKR
   cycles.filter(c => c.status === "Active").forEach(c => {
     (c.participants || []).forEach(eid => {
       const u = users.find(x => x.employeeId === eid);
-      if (u && (u.reportingManagerId === me.employeeId || u.reportingManager === me.name)) items.push({ cycle: c, subject: u });
+      if (u && u.reportingManagerId === me.employeeId) items.push({ cycle: c, subject: u });
     });
   });
   if (items.length === 0) return <Notice icon={Users}>No team submissions to act on. Items from your direct reports across active cycles will appear here.</Notice>;
@@ -877,8 +877,7 @@ function UsersAdmin({ users, setUsers, onSaved, onError, onEditUser, cycles, onU
   const [userSearch, setUserSearch] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState(null);
-  const isDupEditId = !!(editForm && (editForm.employeeId || "").trim()) && users.some(u => u.id !== editingId && u.employeeId.trim().toLowerCase() === (editForm.employeeId || "").trim().toLowerCase());
-  const editValid = editForm && REQUIRED_FIELDS.every(k => (editForm[k] || "").trim()) && !isDupEditId;
+  const editValid = editForm && REQUIRED_FIELDS.every(k => (editForm[k] || "").trim());
   const startEdit = (u) => { setKraUploadId(null); setKraMsg({}); setEditingId(u.id); setEditForm({ ...u }); };
   const cancelEdit = () => { setEditingId(null); setEditForm(null); };
   const [kraUploadId, setKraUploadId] = useState(null);
@@ -914,8 +913,7 @@ function UsersAdmin({ users, setUsers, onSaved, onError, onEditUser, cycles, onU
     const { data, error } = await supabase.rpc("create_user", {
       p_name: form.name, p_employee_id: form.employeeId, p_email: form.email,
       p_department: form.department, p_designation: form.designation, p_role: form.role,
-      p_reporting_manager: form.reportingManager, p_reporting_manager_id: form.reportingManagerId,
-      p_reporting_manager_email: form.reportingManagerEmail, p_password: form.password || "Password@123",
+      p_reporting_manager_id: form.reportingManagerId, p_password: form.password || "Password@123",
     });
     if (error) {
       onError && onError(String(error.message || "").includes("DUPLICATE") ? "That Employee ID is already in use." : "Couldn't add user — please retry.");
@@ -1010,7 +1008,7 @@ function UsersAdmin({ users, setUsers, onSaved, onError, onEditUser, cycles, onU
       try {
         const wb = XLSX.read(new Uint8Array(ev.target.result), { type: "array" });
         const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
-        const allMapped = rows.map(r => ({ name: String(r["Employee Name"] || "").trim(), employeeId: String(r["Employee ID"] || "").trim(), email: String(r["Email ID"] || "").trim(), department: String(r["Department"] || "").trim(), designation: String(r["Designation"] || "").trim(), role: ["employee", "manager", "hr"].includes(String(r["Role"] || "").toLowerCase().trim()) ? String(r["Role"]).toLowerCase().trim() : "employee", reportingManager: String(r["Reporting Manager Name"] || "").trim(), reportingManagerId: String(r["Reporting Manager Emp ID"] || "").trim(), reportingManagerEmail: String(r["Reporting Manager Email ID"] || "").trim(), password: String(r["Password"] || "Password@123").trim() })).filter(u => REQUIRED_FIELDS.every(k => u[k]));
+        const allMapped = rows.map(r => ({ name: String(r["Employee Name"] || "").trim(), employeeId: String(r["Employee ID"] || "").trim(), email: String(r["Email ID"] || "").trim(), department: String(r["Department"] || "").trim(), designation: String(r["Designation"] || "").trim(), role: ["employee", "manager", "hr"].includes(String(r["Role"] || "").toLowerCase().trim()) ? String(r["Role"]).toLowerCase().trim() : "employee", reportingManagerId: String(r["Reporting Manager Emp ID"] || "").trim(), password: String(r["Password"] || "Password@123").trim() })).filter(u => REQUIRED_FIELDS.every(k => u[k]));
         if (!allMapped.length) { setBulkMsg("No valid rows — all mandatory columns are required."); return; }
         const { data, error } = await supabase.rpc("bulk_create_users", { p_rows: allMapped });
         if (error) { setBulkMsg("Couldn't upload — check your connection and retry."); return; }
@@ -1028,6 +1026,16 @@ function UsersAdmin({ users, setUsers, onSaved, onError, onEditUser, cycles, onU
     reader.readAsArrayBuffer(file);
   };
   const rf = (k, label) => (<div key={k}><label className="text-xs font-medium text-slate-500 block mb-1">{label} <span className="text-rose-500">*</span></label><input value={form[k] || ""} onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))} className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 ${!(form[k] || "").trim() ? "border-rose-200 focus:ring-rose-200" : "border-slate-200 focus:ring-indigo-200"}`} /></div>);
+  const managerSelect = (value, onChange, excludeUserId) => (
+    <div className="sm:col-span-2">
+      <label className="text-xs font-medium text-slate-500 block mb-1">Reporting Manager <span className="text-rose-500">*</span></label>
+      <select value={value || ""} onChange={e => onChange(e.target.value)} className={`w-full text-sm border rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 ${!value ? "border-rose-200 focus:ring-rose-200" : "border-slate-200 focus:ring-indigo-200"}`}>
+        <option value="">Select a manager…</option>
+        <option value="—">— (no manager)</option>
+        {users.filter(u => u.id !== excludeUserId).map(u => <option key={u.employeeId} value={u.employeeId}>{u.name} · {u.employeeId}</option>)}
+      </select>
+    </div>
+  );
 
   return (
     <div className="space-y-5">
@@ -1072,7 +1080,7 @@ function UsersAdmin({ users, setUsers, onSaved, onError, onEditUser, cycles, onU
           <div className="sm:col-span-2"><label className="text-xs font-medium text-slate-500 block mb-1">Password <span className="text-rose-500">*</span></label><div className="relative"><input type="text" value={form.password || ""} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} placeholder="Default: Password@123" className={`w-full text-sm border rounded-lg px-3 py-2 pr-10 focus:outline-none focus:ring-2 ${!(form.password||"").trim() ? "border-slate-200 focus:ring-indigo-200" : "border-slate-200 focus:ring-indigo-200"}`} /><KeyRound className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 pointer-events-none" /></div><p className="text-xs text-slate-400 mt-1">Leave blank to use default: <span className="font-medium">Password@123</span></p></div>
         </div>
         <p className="text-xs font-medium text-slate-400 uppercase pt-1">Reporting Manager</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">{rf("reportingManager", "Reporting Manager Name")}{rf("reportingManagerId", "Reporting Manager Emp ID")}{rf("reportingManagerEmail", "Reporting Manager Email ID")}</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">{managerSelect(form.reportingManagerId, v => setForm(f => ({ ...f, reportingManagerId: v })))}</div>
         {isDupId && <p className="text-xs text-rose-600 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> Employee ID <strong>{(form.employeeId||"").trim()}</strong> already exists. Each user must have a unique Employee ID.</p>}
         {!isValid && !isDupId && <p className="text-xs text-amber-600 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> All starred (*) fields are mandatory.</p>}
         <button onClick={addUser} disabled={!isValid} className={`text-sm font-medium px-4 py-2 rounded-lg flex items-center gap-1.5 ${isValid ? "bg-indigo-600 hover:bg-indigo-700 text-white" : "bg-slate-100 text-slate-400 cursor-not-allowed"}`}><UserPlus className="w-4 h-4" /> Add user</button>
@@ -1129,13 +1137,17 @@ function UsersAdmin({ users, setUsers, onSaved, onError, onEditUser, cycles, onU
                   {subordinateCount > 0 && (
                     <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700 flex items-start gap-1.5">
                       <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                      <span>This user is the reporting manager for <strong>{subordinateCount}</strong> direct report{subordinateCount > 1 ? "s" : ""}. Changes to their name, email, or Employee ID will automatically cascade to those records.</span>
+                      <span>This user is the reporting manager for <strong>{subordinateCount}</strong> direct report{subordinateCount > 1 ? "s" : ""}. Their name always shows up to date for those reports — no action needed here.</span>
                     </div>
                   )}
                   <p className="text-xs font-medium text-slate-400 uppercase">Employee</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {ef("name", "Employee Name")}
-                    {ef("employeeId", "Employee ID")}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 block mb-1">Employee ID</label>
+                      <input value={(editForm && editForm.employeeId) || ""} disabled className="w-full text-sm border border-slate-200 bg-slate-50 text-slate-400 rounded-lg px-3 py-2 cursor-not-allowed" />
+                      <p className="text-xs text-slate-400 mt-1">Employee ID can't be changed.</p>
+                    </div>
                     {ef("email", "Email ID")}
                     {ef("department", "Department")}
                     {ef("designation", "Designation")}
@@ -1150,17 +1162,14 @@ function UsersAdmin({ users, setUsers, onSaved, onError, onEditUser, cycles, onU
                   </div>
                   <p className="text-xs font-medium text-slate-400 uppercase pt-1">Reporting Manager</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {ef("reportingManager", "Reporting Manager Name")}
-                    {ef("reportingManagerId", "Reporting Manager Emp ID")}
-                    {ef("reportingManagerEmail", "Reporting Manager Email ID")}
+                    {managerSelect(editForm.reportingManagerId, v => setEditForm(f => ({ ...f, reportingManagerId: v })), editingId)}
                   </div>
                   <p className="text-xs font-medium text-slate-400 uppercase pt-1">Password Reset</p>
                   <div className="flex items-center gap-2">
                     <div className="relative flex-1"><input type="text" value={(editForm && editForm.password) || ""} onChange={e => setEditForm(f => ({ ...f, password: e.target.value }))} placeholder="Enter new password (leave blank to keep current)" className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 pr-10 focus:outline-none focus:ring-2 focus:ring-indigo-200" /><KeyRound className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 pointer-events-none" /></div>
                     <button onClick={() => setEditForm(f => ({ ...f, password: "Password@123" }))} className="text-xs font-medium text-slate-600 border border-slate-200 hover:bg-slate-50 px-3 py-2 rounded-lg whitespace-nowrap">Reset to default</button>
                   </div>
-                  {isDupEditId && <p className="text-xs text-rose-600 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> Employee ID <strong>{(editForm && editForm.employeeId)||""}</strong> is already used by another user.</p>}
-                  {!editValid && !isDupEditId && <p className="text-xs text-amber-600 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> All starred (*) fields are mandatory.</p>}
+                  {!editValid && <p className="text-xs text-amber-600 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> All starred (*) fields are mandatory.</p>}
                   <div className="flex gap-2 pt-1">
                     <button onClick={cancelEdit} className="flex-1 border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 text-sm font-medium px-4 py-2 rounded-lg">Cancel</button>
                     <button onClick={saveEdit} disabled={!editValid} className={`flex-1 text-sm font-medium px-4 py-2 rounded-lg flex items-center justify-center gap-1.5 ${editValid ? "bg-indigo-600 hover:bg-indigo-700 text-white" : "bg-slate-100 text-slate-400 cursor-not-allowed"}`}><Save className="w-4 h-4" /> Save changes</button>
@@ -1689,19 +1698,17 @@ export default function App() {
 
   const editUser = async (oldUser, newData) => {
     const { error } = await supabase.rpc("edit_user", {
-      p_id: oldUser.id, p_name: newData.name, p_employee_id: newData.employeeId,
+      p_id: oldUser.id, p_name: newData.name,
       p_email: newData.email, p_department: newData.department, p_designation: newData.designation,
-      p_role: newData.role, p_reporting_manager: newData.reportingManager,
-      p_reporting_manager_id: newData.reportingManagerId,
-      p_reporting_manager_email: newData.reportingManagerEmail,
+      p_role: newData.role, p_reporting_manager_id: newData.reportingManagerId,
       p_password: (newData.password || "").trim() ? newData.password : null,
     });
     if (error) {
-      showError(String(error.message || "").includes("DUPLICATE") ? "That Employee ID is already in use." : "Couldn't update user — please retry.");
+      showError("Couldn't update user — please retry.");
       return;
     }
     await refetchAll();
-    onSaved("User updated. Changes cascaded to all affected records.");
+    onSaved("User updated.");
   };
 
   const uploadKRA = async (employeeId, kras) => {
