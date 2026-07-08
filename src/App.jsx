@@ -735,10 +735,18 @@ function ApprovalsPage({ users, cycles, getRecord, setRecord, onSaved, approvedK
   );
 }
 
-function CyclesAdmin({ users, cycles, setCycles, onSaved, onError, notify }) {
+function CyclesAdmin({ users, cycles, setCycles, onSaved, onError, notify, onResetParticipant }) {
   const [form, setForm] = useState({ year: new Date().getFullYear(), type: "Goal Setting", start: "", end: "" });
   const [manage, setManage] = useState(null);
   const [search, setSearch] = useState("");
+  const [confirmReset, setConfirmReset] = useState(null);
+  const [resetting, setResetting] = useState(false);
+  const doReset = async (cycle) => {
+    setResetting(true);
+    await onResetParticipant(cycle, confirmReset.eid);
+    setResetting(false);
+    setConfirmReset(null);
+  };
   const initiate = async () => {
     const draft = { year: Number(form.year), type: form.type, status: "Active", start: form.start, end: form.end, participants: [] };
     const { data, error } = await supabase.from("cycles").insert(cycleWriteFields(draft)).select().single();
@@ -834,10 +842,22 @@ function CyclesAdmin({ users, cycles, setCycles, onSaved, onError, notify }) {
                     {(c.participants || []).length === 0 ? <p className="text-xs text-slate-400">None added yet.</p> : (
                       <div className="flex flex-wrap gap-1.5">
                         {(c.participants || []).map(eid => { const u = users.find(x => x.employeeId === eid); return (
-                          <span key={eid} className="inline-flex items-center gap-1 text-xs bg-white border border-slate-200 rounded-full px-2.5 py-1 text-slate-700">{u ? u.name : eid} <span className="text-slate-400">· {eid}</span><button onClick={() => toggleParticipant(c.id, eid)} aria-label="Remove participant" className="text-slate-300 hover:text-rose-500 ml-0.5">×</button></span>
+                          <span key={eid} className="inline-flex items-center gap-1 text-xs bg-white border border-slate-200 rounded-full px-2.5 py-1 text-slate-700">{u ? u.name : eid} <span className="text-slate-400">· {eid}</span><button onClick={() => setConfirmReset({ cid: c.id, eid })} title="Reset this employee's cycle" className="text-slate-300 hover:text-amber-600 ml-0.5"><RefreshCw className="w-3 h-3" /></button><button onClick={() => toggleParticipant(c.id, eid)} aria-label="Remove participant" className="text-slate-300 hover:text-rose-500 ml-0.5">×</button></span>
                         ); })}
                       </div>
                     )}
+                    {confirmReset && confirmReset.cid === c.id && (() => {
+                      const u = users.find(x => x.employeeId === confirmReset.eid);
+                      return (
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mt-2 flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-xs text-amber-700">Reset <strong>{u ? u.name : confirmReset.eid}</strong>'s cycle? This clears everything they've entered and notifies them.</span>
+                          <div className="flex gap-1.5 shrink-0">
+                            <button onClick={() => setConfirmReset(null)} disabled={resetting} className="text-xs font-medium text-slate-600 border border-slate-200 hover:bg-white px-2.5 py-1 rounded-lg">Cancel</button>
+                            <button onClick={() => doReset(c)} disabled={resetting} className="text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 px-2.5 py-1 rounded-lg disabled:opacity-60">{resetting ? "Resetting…" : "Yes, reset"}</button>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div>
                     <div className="text-xs font-medium text-slate-500 mb-1.5">Add participant</div>
@@ -1725,6 +1745,15 @@ export default function App() {
     return { ok: true, text: `KRA applied to ${goalCycles.length} Goal Setting cycle${goalCycles.length > 1 ? "s" : ""} and set to Approved.` };
   };
 
+  const resetParticipant = async (cycle, employeeId) => {
+    const next = defaultRecord(cycle.type);
+    setRecords(rs => ({ ...rs, [rKey(cycle.id, employeeId)]: next }));
+    await persistRecord(cycle.id, employeeId, next);
+    const subject = users.find(u => u.employeeId === employeeId);
+    if (subject) notify("cycle_reset", { cycle, subject });
+    onSaved(`Reset ${subject ? subject.name : employeeId}'s cycle.`);
+  };
+
   const composeEmails = (event, ctx) => {
     const { cycle, subject, note } = ctx || {};
     if (!subject) return [];
@@ -1784,6 +1813,10 @@ export default function App() {
         push(mgrTo, mgrName, `Review returned by HR — ${subject.name}`,
           `Hi ${mgrName},\n\nHR has returned the ${cy} review for ${subject.name} (${subject.employeeId}) for changes.${note ? `\n\nHR note: ${note}` : ""}${sig}`);
         break;
+      case "cycle_reset":
+        push(subject.email, subject.name, `Your ${cy} progress has been reset`,
+          `Hi ${subject.name},\n\nYour progress on the ${cy} cycle has been reset by HR.${note ? `\n\nNote: ${note}` : ""}\n\nPlease sign in to review and start again.${sig}`);
+        break;
       default:
         break;
     }
@@ -1840,7 +1873,7 @@ export default function App() {
         {view === "home" && <HomeDashboard me={me} cycles={cycles} go={setView} />}
         {view === "tasks" && <MyTasksPage me={me} cycles={cycles} getRecord={getRecord} setRecord={setRecord} onSaved={onSaved} approvedKRAsFor={approvedKRAsFor} notify={notify} />}
         {view === "team" && <TeamPage me={me} users={users} cycles={cycles} getRecord={getRecord} setRecord={setRecord} onSaved={onSaved} approvedKRAsFor={approvedKRAsFor} notify={notify} />}
-        {view === "cycles" && <CyclesAdmin users={users} cycles={cycles} setCycles={setCycles} onSaved={onSaved} onError={showError} notify={notify} />}
+        {view === "cycles" && <CyclesAdmin users={users} cycles={cycles} setCycles={setCycles} onSaved={onSaved} onError={showError} notify={notify} onResetParticipant={resetParticipant} />}
         {view === "approvals" && <ApprovalsPage users={users} cycles={cycles} getRecord={getRecord} setRecord={setRecord} onSaved={onSaved} approvedKRAsFor={approvedKRAsFor} notify={notify} />}
         {view === "users" && <UsersAdmin users={users} setUsers={setUsers} onSaved={onSaved} onError={showError} onEditUser={editUser} cycles={cycles} onUploadKRA={uploadKRA} />}
         {view === "completed" && <CompletedPage me={me} cycles={cycles} getRecord={getRecord} approvedKRAsFor={approvedKRAsFor} />}
