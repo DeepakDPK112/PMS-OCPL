@@ -1614,6 +1614,9 @@ function HomeDashboard({ me, cycles, go }) {
         <div className="flex items-center gap-2 mb-2"><Sparkles className="w-5 h-5" /><span className="text-sm opacity-90">Welcome back</span></div>
         <h2 className="text-2xl font-semibold leading-tight">{me.name}</h2>
         <p className="text-sm opacity-90 mt-1">{me.designation} · {me.department} · {USER_ROLE[me.role].label}</p>
+        {me.reportingManagerId && me.reportingManagerId !== "—" && (
+          <p className="text-xs opacity-75 mt-1">Reports to {me.reportingManager} ({me.reportingManagerId})</p>
+        )}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {(me.role === "employee" || me.role === "manager") && <button onClick={() => go("tasks")} className="text-left bg-white rounded-xl border border-slate-200 p-5 hover:border-indigo-300 transition"><div className="flex items-center gap-2 mb-1"><ClipboardCheck className="w-5 h-5 text-indigo-600" /><span className="font-medium text-slate-800">My Tasks</span></div><p className="text-sm text-slate-500">{myActive} active cycle(s) assigned to you.</p></button>}
