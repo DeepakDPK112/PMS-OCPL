@@ -63,7 +63,7 @@ const mapUserRow = (r) => ({
   reportingManagerEmail: r.reporting_manager_email,
 });
 const mapCycleRow = (r) => ({
-  id: r.id, year: r.year, type: r.type, status: r.status,
+  id: r.id, year: r.year, type: r.type, status: r.status, name: r.name || "",
   start: r.start_date, end: r.end_date, participants: r.participants || [],
 });
 const mapEmailRow = (r) => ({
@@ -71,9 +71,10 @@ const mapEmailRow = (r) => ({
   subject: r.subject, body: r.body, sentAt: r.sent_at, event: r.event,
 });
 const cycleWriteFields = (c) => ({
-  year: Number(c.year), type: c.type, status: c.status,
+  year: Number(c.year), type: c.type, status: c.status, name: (c.name || "").trim() || null,
   start_date: c.start || null, end_date: c.end || null, participants: c.participants || [],
 });
+const cycleLabel = (c) => (c.name && c.name.trim()) ? c.name : `${c.type} ${c.year}`;
 
 // ---- small UI ----
 function Pill({ children, className }) { return <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border ${className}`}>{children}</span>; }
@@ -487,7 +488,7 @@ function CycleCard({ cycle, children, right }) {
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="flex items-center gap-2"><Pill className={CYCLE_TONE[cycle.type]}>{cycle.type}</Pill><span className="text-xs text-slate-400">{cycle.year}</span></div>
+        <div className="flex items-center gap-2 flex-wrap"><Pill className={CYCLE_TONE[cycle.type]}>{cycle.type}</Pill><span className="text-xs text-slate-400">{cycle.year}</span>{cycle.name && <span className="text-xs font-medium text-slate-600">· {cycle.name}</span>}</div>
         {right}
       </div>
       {children}
@@ -737,7 +738,7 @@ function ApprovalsPage({ users, cycles, getRecord, setRecord, onSaved, approvedK
 }
 
 function CyclesAdmin({ users, cycles, setCycles, onSaved, onError, notify, onResetParticipant }) {
-  const [form, setForm] = useState({ year: new Date().getFullYear(), type: "Goal Setting", start: "", end: "" });
+  const [form, setForm] = useState({ name: "", year: new Date().getFullYear(), type: "Goal Setting", start: "", end: "" });
   const [manage, setManage] = useState(null);
   const [search, setSearch] = useState("");
   const [confirmReset, setConfirmReset] = useState(null);
@@ -748,11 +749,14 @@ function CyclesAdmin({ users, cycles, setCycles, onSaved, onError, notify, onRes
     setResetting(false);
     setConfirmReset(null);
   };
+  const initiateValid = form.name.trim() && form.start && form.end;
   const initiate = async () => {
-    const draft = { year: Number(form.year), type: form.type, status: "Active", start: form.start, end: form.end, participants: [] };
+    if (!initiateValid) return;
+    const draft = { name: form.name.trim(), year: Number(form.year), type: form.type, status: "Active", start: form.start, end: form.end, participants: [] };
     const { data, error } = await supabase.from("cycles").insert(cycleWriteFields(draft)).select().single();
     if (error) { onError && onError("Couldn't create the cycle — please retry."); return; }
     setCycles([...cycles, mapCycleRow(data)]);
+    setForm(f => ({ ...f, name: "" }));
     onSaved("Cycle initiated.");
   };
   const toggleStatus = async (id) => {
@@ -814,13 +818,18 @@ function CyclesAdmin({ users, cycles, setCycles, onSaved, onError, notify, onRes
     <div className="space-y-5">
       <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
         <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2"><Play className="w-4 h-4 text-indigo-500" /> Initiate a cycle</h3>
+        <div>
+          <label className="text-xs text-slate-500 block mb-1">Cycle Name <span className="text-rose-500">*</span></label>
+          <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Q1 Goal Setting — Retail Ops" className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 ${!form.name.trim() ? "border-rose-200 focus:ring-rose-200" : "border-slate-200 focus:ring-indigo-200"}`} />
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div><label className="text-xs text-slate-500 block mb-1">Year</label><input type="number" value={form.year} onChange={e => setForm(f => ({ ...f, year: e.target.value }))} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-200" /></div>
           <div><label className="text-xs text-slate-500 block mb-1">Type</label><select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200">{CYCLE_TYPES.map(t => <option key={t}>{t}</option>)}</select></div>
-          <div><label className="text-xs text-slate-500 block mb-1">Start</label><input type="date" value={form.start} onChange={e => setForm(f => ({ ...f, start: e.target.value }))} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-200" /></div>
-          <div><label className="text-xs text-slate-500 block mb-1">End</label><input type="date" value={form.end} onChange={e => setForm(f => ({ ...f, end: e.target.value }))} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-200" /></div>
+          <div><label className="text-xs text-slate-500 block mb-1">Start <span className="text-rose-500">*</span></label><input type="date" value={form.start} onChange={e => setForm(f => ({ ...f, start: e.target.value }))} className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 ${!form.start ? "border-rose-200 focus:ring-rose-200" : "border-slate-200 focus:ring-indigo-200"}`} /></div>
+          <div><label className="text-xs text-slate-500 block mb-1">End <span className="text-rose-500">*</span></label><input type="date" value={form.end} onChange={e => setForm(f => ({ ...f, end: e.target.value }))} className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 ${!form.end ? "border-rose-200 focus:ring-rose-200" : "border-slate-200 focus:ring-indigo-200"}`} /></div>
         </div>
-        <button onClick={initiate} className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg flex items-center gap-1.5"><Play className="w-4 h-4" /> Initiate cycle</button>
+        {!initiateValid && <p className="text-xs text-amber-600 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> Cycle name, start date, and end date are mandatory.</p>}
+        <button onClick={initiate} disabled={!initiateValid} className={`text-sm font-medium px-4 py-2 rounded-lg flex items-center gap-1.5 ${initiateValid ? "bg-indigo-600 hover:bg-indigo-700 text-white" : "bg-slate-100 text-slate-400 cursor-not-allowed"}`}><Play className="w-4 h-4" /> Initiate cycle</button>
       </div>
 
       {years.map(y => (
@@ -829,9 +838,10 @@ function CyclesAdmin({ users, cycles, setCycles, onSaved, onError, notify, onRes
           {cycles.filter(c => c.year === y).map(c => (
             <div key={c.id} className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
               <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="flex items-center gap-2"><Pill className={CYCLE_TONE[c.type]}>{c.type}</Pill><Pill className={c.status === "Active" ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-500 border-slate-200"}>{c.status}</Pill></div>
+                <div className="flex items-center gap-2 flex-wrap">{c.name && <span className="font-medium text-slate-800 text-sm">{c.name}</span>}<Pill className={CYCLE_TONE[c.type]}>{c.type}</Pill><Pill className={c.status === "Active" ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-500 border-slate-200"}>{c.status}</Pill></div>
                 <div className="flex items-center gap-2"><button onClick={() => toggleStatus(c.id)} className="text-xs font-medium px-2.5 py-1 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">{c.status === "Active" ? "Close" : "Reopen"}</button><button onClick={() => remove(c.id)} className="text-slate-300 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button></div>
               </div>
+              {(c.start || c.end) && <div className="text-xs text-slate-400">{c.start || "—"} → {c.end || "—"}</div>}
               <div className="flex items-center justify-between">
                 <span className="text-xs text-slate-500">{(c.participants || []).length} participant(s)</span>
                 <button onClick={() => setManage(manage === c.id ? null : c.id)} className="text-xs font-medium text-indigo-600 flex items-center gap-1"><Users className="w-3.5 h-3.5" /> Manage participants</button>
@@ -1206,7 +1216,7 @@ function UsersAdmin({ users, setUsers, onSaved, onError, onEditUser, cycles, onU
                   {(() => {
                     const goalCycles = (cycles || []).filter(c => c.type === "Goal Setting" && (c.participants || []).includes(u.employeeId));
                     return goalCycles.length > 0
-                      ? <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-600"><span className="font-medium text-slate-700">Will apply to: </span>{goalCycles.map(c => <span key={c.id} className={`inline-flex items-center gap-1 mr-1.5 px-1.5 py-0.5 rounded-full border text-xs font-medium ${c.status === "Active" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-500 border-slate-200"}`}>{c.type} {c.year} · {c.status}</span>)}</div>
+                      ? <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-600"><span className="font-medium text-slate-700">Will apply to: </span>{goalCycles.map(c => <span key={c.id} className={`inline-flex items-center gap-1 mr-1.5 px-1.5 py-0.5 rounded-full border text-xs font-medium ${c.status === "Active" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-500 border-slate-200"}`}>{cycleLabel(c)} · {c.status}</span>)}</div>
                       : <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700 flex items-start gap-1.5"><AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>This user is not enrolled in any Goal Setting cycle. Enroll them via Cycle Management first — the uploaded KRA will be applied once enrolled.</span></div>;
                   })()}
                   <div className="text-xs text-slate-500 bg-white border border-slate-200 rounded-lg px-3 py-2 space-y-1">
@@ -1284,7 +1294,7 @@ function KRAViewModal({ subject, cycle, record, kras, onClose }) {
       <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6 space-y-4">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <h3 className="font-semibold text-slate-800">{subject.name} — {cycle.type} {cycle.year}</h3>
+            <h3 className="font-semibold text-slate-800">{subject.name} — {cycleLabel(cycle)}</h3>
             <p className="text-xs text-slate-500">{subject.employeeId} · {subject.designation} · {subject.department}</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none shrink-0">×</button>
@@ -1367,7 +1377,7 @@ function ReportsPage({ users, cycles, records }) {
             "Employee Name": u.name, "Employee ID": u.employeeId,
             "Department": u.department, "Designation": u.designation,
             "Reporting Manager": u.reportingManager,
-            "Cycle Year": c.year, "Cycle Status": c.status,
+            "Cycle Name": c.name || "", "Cycle Year": c.year, "Cycle Status": c.status,
             "KRA Status": rec ? rec.status || "Draft" : "Draft",
             "KRA #": ki + 1, "Key Result Area": k.kra,
             "KPI": p.kpi, "Measurement": p.measurement,
@@ -1378,7 +1388,7 @@ function ReportsPage({ users, cycles, records }) {
     });
     if (!rows.length) { alert("No KRA data found. Ensure employees have been enrolled in Goal Setting cycles."); return; }
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws["!cols"] = [{wch:20},{wch:12},{wch:20},{wch:18},{wch:20},{wch:10},{wch:12},{wch:14},{wch:6},{wch:26},{wch:32},{wch:22},{wch:28},{wch:12}];
+    ws["!cols"] = [{wch:20},{wch:12},{wch:20},{wch:18},{wch:20},{wch:22},{wch:10},{wch:12},{wch:14},{wch:6},{wch:26},{wch:32},{wch:22},{wch:28},{wch:12}];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "KRA Report");
     XLSX.writeFile(wb, `KRA_Report_${new Date().toISOString().slice(0,10)}.xlsx`);
@@ -1408,7 +1418,7 @@ function ReportsPage({ users, cycles, records }) {
             "Employee Name": u.name, "Employee ID": u.employeeId,
             "Department": u.department, "Designation": u.designation,
             "Reporting Manager": u.reportingManager,
-            "Cycle Type": c.type, "Year": c.year, "Stage": stageLabel,
+            "Cycle Name": c.name || "", "Cycle Type": c.type, "Year": c.year, "Stage": stageLabel,
             "Key Result Area": k.kra, "KPI": p.kpi,
             "Weightage (%)": Number(p.weightage) || 0,
             "Self Rating": r.selfRating || "",
@@ -1421,7 +1431,7 @@ function ReportsPage({ users, cycles, records }) {
           "Employee Name": u.name, "Employee ID": u.employeeId,
           "Department": u.department, "Designation": u.designation,
           "Reporting Manager": u.reportingManager,
-          "Cycle Type": c.type, "Year": c.year, "Stage": stageLabel,
+          "Cycle Name": c.name || "", "Cycle Type": c.type, "Year": c.year, "Stage": stageLabel,
           "Key Result Area": "── OVERALL (Weighted CGPA) ──", "KPI": "",
           "Weightage (%)": 100,
           "Self Rating": selfCGPA ? selfCGPA.toFixed(2) : "",
@@ -1434,7 +1444,7 @@ function ReportsPage({ users, cycles, records }) {
     });
     if (!rows.length) { alert("No review data found. Reviews must be in progress or completed."); return; }
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws["!cols"] = [{wch:20},{wch:12},{wch:18},{wch:16},{wch:20},{wch:24},{wch:6},{wch:18},{wch:26},{wch:30},{wch:12},{wch:11},{wch:32},{wch:13},{wch:32}];
+    ws["!cols"] = [{wch:20},{wch:12},{wch:18},{wch:16},{wch:20},{wch:22},{wch:24},{wch:6},{wch:18},{wch:26},{wch:30},{wch:12},{wch:11},{wch:32},{wch:13},{wch:32}];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Review Ratings");
     XLSX.writeFile(wb, `Review_Ratings_${new Date().toISOString().slice(0,10)}.xlsx`);
@@ -1461,7 +1471,7 @@ function ReportsPage({ users, cycles, records }) {
 
   const downloadCompletion = () => {
     const rows = visibleItems.map(({ cycle: c, user: u, st }) => ({
-      "Cycle Type": c.type, "Year": c.year, "Cycle Status": c.status,
+      "Cycle Name": c.name || "", "Cycle Type": c.type, "Year": c.year, "Cycle Status": c.status,
       "Employee Name": u.name, "Employee ID": u.employeeId,
       "Department": u.department, "Designation": u.designation,
       "Reporting Manager": u.reportingManager,
@@ -1469,7 +1479,7 @@ function ReportsPage({ users, cycles, records }) {
     }));
     if (!rows.length) { alert("No data to export."); return; }
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws["!cols"] = [{wch:26},{wch:6},{wch:12},{wch:20},{wch:12},{wch:20},{wch:18},{wch:20},{wch:20}];
+    ws["!cols"] = [{wch:22},{wch:26},{wch:6},{wch:12},{wch:20},{wch:12},{wch:20},{wch:18},{wch:20},{wch:20}];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Completion Status");
     XLSX.writeFile(wb, `Completion_Status_${new Date().toISOString().slice(0,10)}.xlsx`);
@@ -1515,7 +1525,7 @@ function ReportsPage({ users, cycles, records }) {
         <div className="flex gap-2 flex-wrap">
           <select value={filterCycleId} onChange={e => setFilterCycleId(e.target.value)} className="flex-1 min-w-0 text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200">
             <option value="all">All cycles</option>
-            {cycles.map(c => <option key={c.id} value={String(c.id)}>{c.type} {c.year} ({c.status})</option>)}
+            {cycles.map(c => <option key={c.id} value={String(c.id)}>{cycleLabel(c)} ({c.status})</option>)}
           </select>
           <select value={filterType} onChange={e => setFilterType(e.target.value)} className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200">
             <option value="all">All types</option>
@@ -1571,7 +1581,7 @@ function ReportsPage({ users, cycles, records }) {
                       <td className="px-3 py-2.5 text-slate-600 hidden sm:table-cell">{u.reportingManager}</td>
                       <td className="px-3 py-2.5">
                         <Pill className={CYCLE_TONE[c.type]}>{c.type}</Pill>
-                        <div className="text-slate-400 mt-0.5">{c.year}</div>
+                        <div className="text-slate-400 mt-0.5">{c.year}{c.name ? ` · ${c.name}` : ""}</div>
                       </td>
                       <td className="px-3 py-2.5">
                         <Pill className={STATUS_PILL[st.tone]}>
@@ -1858,7 +1868,7 @@ export default function App() {
   const composeEmails = (event, ctx) => {
     const { cycle, subject, note } = ctx || {};
     if (!subject) return [];
-    const cy = cycle ? `${cycle.type} ${cycle.year}` : "the cycle";
+    const cy = cycle ? cycleLabel(cycle) : "the cycle";
     const mgrTo = subject.reportingManagerEmail;
     const mgrName = subject.reportingManager;
     const hrUsers = users.filter(u => u.role === "hr");
