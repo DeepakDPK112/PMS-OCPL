@@ -90,6 +90,7 @@ function RatingPicker({ value, onChange }) {
 }
 function Field({ label, children }) { return <div className="flex items-center gap-2"><label className="text-xs font-medium text-slate-500 w-24 shrink-0">{label}</label><div className="flex-1">{children}</div></div>; }
 function band(level) { return RATING_SCALE.find(x => x.level === level); }
+const fmtDT = (iso) => iso ? new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—";
 const STATUS_PILL = { slate: "bg-slate-100 text-slate-500 border-slate-200", sky: "bg-sky-100 text-sky-700 border-sky-200", amber: "bg-amber-100 text-amber-700 border-amber-200", emerald: "bg-emerald-100 text-emerald-700 border-emerald-200" };
 function recStatus(cycle, rec) {
   if (cycle.type === "Goal Setting") {
@@ -193,8 +194,8 @@ function GoalActivity({ subject, record, onChange, onSaved, actorRole, notify })
   const removeKra = (kid) => setKras(record.kras.filter(k => k.id !== kid));
   const addKpi = (kid) => setKras(record.kras.map(k => k.id === kid ? { ...k, kpis: [...k.kpis, { id: Date.now(), kpi: "", measurement: "", target: "", weightage: 0 }] } : k));
   const removeKpi = (kid, pid) => setKras(record.kras.map(k => k.id === kid ? { ...k, kpis: k.kpis.filter(p => p.id !== pid) } : k));
-  const submit = () => { onChange({ ...record, status: "Submitted", note: "" }, { immediate: true }); onSaved("Submitted for approval."); notify && notify("kra_submitted"); };
-  const decide = (s) => { const noteVal = draftNote; onChange({ ...record, status: s, note: noteVal }, { immediate: true }); setDraftNote(""); onSaved(s === "Approved" ? "Approved." : "Sent back for changes."); if (notify) { if (s === "Approved") notify("kra_approved"); else notify("kra_changes", { note: noteVal }); } };
+  const submit = () => { onChange({ ...record, status: "Submitted", note: "", submittedAt: new Date().toISOString() }, { immediate: true }); onSaved("Submitted for approval."); notify && notify("kra_submitted"); };
+  const decide = (s) => { const noteVal = draftNote; onChange({ ...record, status: s, note: noteVal, ...(s === "Approved" ? { approvedAt: new Date().toISOString() } : {}) }, { immediate: true }); setDraftNote(""); onSaved(s === "Approved" ? "Approved." : "Sent back for changes."); if (notify) { if (s === "Approved") notify("kra_approved"); else notify("kra_changes", { note: noteVal }); } };
   const downloadExcel = () => {
     const rows = [];
     record.kras.forEach((k, ki) => k.kpis.forEach(p => rows.push({ "Employee Name": subject.name, "Employee ID": subject.employeeId, "Department": subject.department, "Designation": subject.designation, "Reporting Manager": subject.reportingManager, "KRA #": ki + 1, "Key Result Area": k.kra, "KPI": p.kpi, "Measurement": p.measurement, "Target": p.target, "Weightage (%)": Number(p.weightage) || 0 })));
@@ -302,10 +303,10 @@ function ReviewActivity({ subject, record, kras, onChange, onSaved, actorRole, h
   const hrNote = review.__hrNote || "";
   const allKpis = kras ? kras.flatMap(k => k.kpis) : [];
 
-  const submitSelf = () => { onChange({ ...record, stage: "manager", review: { ...review, __returnNote: "" } }, { immediate: true }); onSaved("Submitted to manager."); notify && notify("self_submitted"); };
-  const finalize = () => { onChange({ ...record, stage: hasHR ? "hr" : "done", review: { ...review, __hrNote: "" } }, { immediate: true }); onSaved(hasHR ? "Sent to HR." : "Review complete."); notify && notify(hasHR ? "review_to_hr" : "midyear_complete"); };
+  const submitSelf = () => { onChange({ ...record, stage: "manager", review: { ...review, __returnNote: "" }, selfSubmittedAt: new Date().toISOString() }, { immediate: true }); onSaved("Submitted to manager."); notify && notify("self_submitted"); };
+  const finalize = () => { onChange({ ...record, stage: hasHR ? "hr" : "done", review: { ...review, __hrNote: "" }, managerApprovedAt: new Date().toISOString() }, { immediate: true }); onSaved(hasHR ? "Sent to HR." : "Review complete."); notify && notify(hasHR ? "review_to_hr" : "midyear_complete"); };
   const sendBack = () => { if (!returnComment.trim()) return; const noteVal = returnComment; onChange({ ...record, stage: "self", review: { ...review, __returnNote: noteVal } }, { immediate: true }); setReturnComment(""); onSaved("Sent back to employee."); notify && notify("review_returned", { note: noteVal }); };
-  const approveHR = () => { onChange({ ...record, stage: "done", review: { ...review, __hrNote: "" } }, { immediate: true }); onSaved("Approved & released."); notify && notify("hr_approved"); };
+  const approveHR = () => { onChange({ ...record, stage: "done", review: { ...review, __hrNote: "" }, hrApprovedAt: new Date().toISOString() }, { immediate: true }); onSaved("Approved & released."); notify && notify("hr_approved"); };
   const rejectHR = () => { if (!hrComment.trim()) return; const noteVal = hrComment; onChange({ ...record, stage: "manager", review: { ...review, __hrNote: noteVal } }, { immediate: true }); setHrComment(""); onSaved("Sent back to manager."); notify && notify("hr_rejected", { note: noteVal }); };
 
   const STEPS = hasHR ? [{ id: "self", label: "Self" }, { id: "manager", label: "Manager" }, { id: "hr", label: "HR" }, { id: "done", label: "Done" }] : [{ id: "self", label: "Self" }, { id: "manager", label: "Manager" }, { id: "done", label: "Done" }];
@@ -1267,11 +1268,90 @@ function UsersAdmin({ users, setUsers, onSaved, onError, onEditUser, cycles, onU
   );
 }
 
+function KRAViewModal({ subject, cycle, record, kras, onClose }) {
+  const isGoal = cycle.type === "Goal Setting";
+  const rKras = isGoal ? (record?.kras || []) : (kras || []);
+  const totalW = rKras.length ? totalWeight(rKras) : 0;
+  const review = !isGoal ? (record?.review || {}) : {};
+  const allKpis = !isGoal ? rKras.flatMap(k => k.kpis) : [];
+  const mgrCGPA = !isGoal && totalW ? allKpis.reduce((a, p) => a + (review[p.id]?.mgrRating || 0) * Number(p.weightage || 0), 0) / totalW : 0;
+  const selfCGPA = !isGoal && totalW ? allKpis.reduce((a, p) => a + (review[p.id]?.selfRating || 0) * Number(p.weightage || 0), 0) / totalW : 0;
+  const overall_c = !isGoal ? (review.__overall || {}) : {};
+  const st = recStatus(cycle, record || defaultRecord(cycle.type));
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50">
+      <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6 space-y-4">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h3 className="font-semibold text-slate-800">{subject.name} — {cycle.type} {cycle.year}</h3>
+            <p className="text-xs text-slate-500">{subject.employeeId} · {subject.designation} · {subject.department}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none shrink-0">×</button>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap text-xs">
+          {isGoal ? <Pill className={SHEET_STATUS[record?.status || "Draft"]}>{record?.status || "Draft"}</Pill> : <Pill className={STATUS_PILL[st.tone]}>{st.label}</Pill>}
+          {isGoal && <Pill className={totalW === 100 ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-amber-100 text-amber-700 border-amber-200"}>{totalW}% / 100%</Pill>}
+        </div>
+
+        <div className="bg-slate-50 rounded-lg p-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+          <div><span className="text-slate-400">Submitted: </span><span className="text-slate-700 font-medium">{fmtDT(isGoal ? record?.submittedAt : record?.selfSubmittedAt)}</span></div>
+          <div><span className="text-slate-400">Manager approved: </span><span className="text-slate-700 font-medium">{fmtDT(isGoal ? record?.approvedAt : record?.managerApprovedAt)}</span></div>
+          {!isGoal && cycle.type === "Annual Performance Review" && <div><span className="text-slate-400">HR approved: </span><span className="text-slate-700 font-medium">{fmtDT(record?.hrApprovedAt)}</span></div>}
+        </div>
+
+        {rKras.length === 0 ? (
+          <Notice icon={AlertCircle} tone="amber">{isGoal ? "No KRA sheet submitted yet." : "No approved KRA sheet found for this employee/year — a Goal Setting cycle must be approved first."}</Notice>
+        ) : isGoal ? (
+          <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead><tr className="bg-slate-50 text-slate-500 text-left"><th className="px-3 py-2">KRA</th><th className="px-3 py-2">KPI</th><th className="px-3 py-2">Measurement</th><th className="px-3 py-2">Target</th><th className="px-3 py-2 text-right">Wt.</th></tr></thead>
+              <tbody>{rKras.map((k, ki) => k.kpis.map((p, pi) => (
+                <tr key={p.id} className="border-t border-slate-100"><td className="px-3 py-2 font-medium text-slate-800">{pi === 0 ? k.kra : ""}</td><td className="px-3 py-2 text-slate-700">{p.kpi}</td><td className="px-3 py-2 text-slate-600">{p.measurement}</td><td className="px-3 py-2 text-slate-600">{p.target}</td><td className="px-3 py-2 text-right">{p.weightage}%</td></tr>
+              )))}</tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-white rounded-lg border border-slate-200 p-3"><div className="text-xs text-slate-500">Self overall</div><div className="text-xl font-semibold text-slate-800">{selfCGPA.toFixed(2)} / 5</div></div>
+              <div className="bg-white rounded-lg border border-slate-200 p-3"><div className="text-xs text-slate-500">Manager overall</div><div className="text-xl font-semibold text-slate-800">{mgrCGPA.toFixed(2)} / 5</div></div>
+            </div>
+            {rKras.map((k, ki) => (
+              <div key={k.id} className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
+                <div className="flex items-center gap-2"><span className="w-6 h-6 rounded-lg bg-indigo-100 text-indigo-600 text-xs font-semibold flex items-center justify-center">{ki + 1}</span><h4 className="font-medium text-slate-800 text-sm">{k.kra}</h4></div>
+                {k.kpis.map(p => { const r = review[p.id] || {}; return (
+                  <div key={p.id} className="border-t border-slate-100 pt-2">
+                    <div className="flex items-center justify-between gap-2"><p className="text-sm text-slate-700">{p.kpi}</p><WeightBadge w={p.weightage} /></div>
+                    <div className="grid grid-cols-2 gap-2 text-xs mt-1">
+                      <div className="bg-slate-50 rounded-lg p-2"><span className="text-slate-500">Self: </span>{r.selfRating ? `${r.selfRating} · ${band(r.selfRating).label}` : "—"}{r.selfComment ? <p className="text-slate-600 mt-0.5">{r.selfComment}</p> : null}</div>
+                      <div className="bg-indigo-50/60 rounded-lg p-2"><span className="text-slate-500">Mgr: </span>{r.mgrRating ? `${r.mgrRating} · ${band(r.mgrRating).label}` : "—"}{r.mgrComment ? <p className="text-slate-600 mt-0.5">{r.mgrComment}</p> : null}</div>
+                    </div>
+                  </div>
+                ); })}
+              </div>
+            ))}
+            <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-2"><h4 className="text-sm font-semibold text-slate-700">Overall comments</h4><div className="bg-slate-50 rounded-lg p-2.5 text-sm"><span className="text-xs text-slate-500 block">Self</span>{overall_c.selfComment || "—"}</div><div className="bg-indigo-50/60 rounded-lg p-2.5 text-sm"><span className="text-xs text-slate-500 block">Manager</span>{overall_c.mgrComment || "—"}</div></div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ReportsPage({ users, cycles, records }) {
   const [filterCycleId, setFilterCycleId] = useState("all");
   const [filterType, setFilterType] = useState("all");
+  const [viewing, setViewing] = useState(null);
 
   const getRec = (cid, eid) => records[`${cid}::${eid}`] || null;
+  const getApprovedKras = (eid, year) => {
+    const gc = cycles.find(c => c.type === "Goal Setting" && c.year === year);
+    if (!gc) return null;
+    const rec = getRec(gc.id, eid);
+    return rec && rec.status === "Approved" ? rec.kras : null;
+  };
 
   // ── KRA Report ──────────────────────────────────────────────────────
   const downloadKRAReport = () => {
@@ -1475,10 +1555,13 @@ function ReportsPage({ users, cycles, records }) {
                     <th className="px-3 py-2.5 font-medium text-slate-500 hidden sm:table-cell">Manager</th>
                     <th className="px-3 py-2.5 font-medium text-slate-500">Cycle</th>
                     <th className="px-3 py-2.5 font-medium text-slate-500">Progress</th>
+                    <th className="px-3 py-2.5 font-medium text-slate-500 hidden md:table-cell">Submitted</th>
+                    <th className="px-3 py-2.5 font-medium text-slate-500 hidden md:table-cell">Approved</th>
+                    <th className="px-3 py-2.5 font-medium text-slate-500"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleItems.map(({ cycle: c, user: u, st }, i) => (
+                  {visibleItems.map(({ cycle: c, user: u, rec, st }, i) => (
                     <tr key={i} className={`border-t border-slate-100 ${i % 2 === 0 ? "" : "bg-slate-50/50"}`}>
                       <td className="px-3 py-2.5">
                         <div className="font-medium text-slate-800">{u.name}</div>
@@ -1496,6 +1579,11 @@ function ReportsPage({ users, cycles, records }) {
                           {st.label}
                         </Pill>
                       </td>
+                      <td className="px-3 py-2.5 text-slate-500 hidden md:table-cell">{fmtDT(c.type === "Goal Setting" ? rec?.submittedAt : rec?.selfSubmittedAt)}</td>
+                      <td className="px-3 py-2.5 text-slate-500 hidden md:table-cell">{fmtDT(c.type === "Goal Setting" ? rec?.approvedAt : rec?.managerApprovedAt)}</td>
+                      <td className="px-3 py-2.5">
+                        <button onClick={() => setViewing({ cycle: c, user: u, rec })} className="text-xs font-medium text-indigo-600 hover:text-indigo-700 flex items-center gap-1 whitespace-nowrap"><Eye className="w-3.5 h-3.5" /> View</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1504,6 +1592,16 @@ function ReportsPage({ users, cycles, records }) {
           )
         }
       </div>
+
+      {viewing && (
+        <KRAViewModal
+          subject={viewing.user}
+          cycle={viewing.cycle}
+          record={viewing.rec}
+          kras={viewing.cycle.type !== "Goal Setting" ? getApprovedKras(viewing.user.employeeId, viewing.cycle.year) : null}
+          onClose={() => setViewing(null)}
+        />
+      )}
     </div>
   );
 }
