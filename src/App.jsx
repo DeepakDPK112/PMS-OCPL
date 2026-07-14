@@ -913,6 +913,8 @@ function UsersAdmin({ users, setUsers, onSaved, onError, onEditUser, cycles, onU
   const cancelEdit = () => { setEditingId(null); setEditForm(null); };
   const [kraUploadId, setKraUploadId] = useState(null);
   const [kraMsg, setKraMsg] = useState({});
+  const [kraPending, setKraPending] = useState({});
+  const [bulkKraMode, setBulkKraMode] = useState("approved");
   const saveEdit = () => {
     if (!editValid) return;
     const oldUser = users.find(u => u.id === editingId);
@@ -1025,7 +1027,7 @@ function UsersAdmin({ users, setUsers, onSaved, onError, onEditUser, cycles, onU
           if (!kras.length) { results.push({ ok: false, label: `${eid} — ${user.name}`, text: "No KRA rows found for this employee." }); continue; }
           const totalW = kras.flatMap(k => k.kpis).reduce((a, p) => a + Number(p.weightage || 0), 0);
           if (Math.abs(totalW - 100) > 0.01) { results.push({ ok: false, label: `${eid} — ${user.name}`, text: `Weightage total is ${totalW.toFixed(1)}% — must be exactly 100%.` }); continue; }
-          const result = await onUploadKRA(user.employeeId, kras);
+          const result = await onUploadKRA(user.employeeId, kras, bulkKraMode);
           results.push({ ...result, label: `${eid} — ${user.name}` });
           setBulkKRAMsg([...results]);
         }
@@ -1082,6 +1084,14 @@ function UsersAdmin({ users, setUsers, onSaved, onError, onEditUser, cycles, onU
           <button onClick={downloadBulkKRATemplate} className="text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Download className="w-3.5 h-3.5" /> Template</button>
         </div>
         <p className="text-xs text-slate-500">Upload a single Excel file with KRAs for multiple employees at once. Include an <strong>Employee ID</strong> column to identify each user; all KPI weightages per employee must total <strong>100%</strong>.</p>
+        <div className="flex items-center gap-2 text-xs flex-wrap">
+          <span className="text-slate-500">Apply as:</span>
+          <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+            <button onClick={() => setBulkKraMode("approved")} className={`px-3 py-1.5 font-medium ${bulkKraMode === "approved" ? "bg-emerald-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>Approved</button>
+            <button onClick={() => setBulkKraMode("draft")} className={`px-3 py-1.5 font-medium border-l border-slate-200 ${bulkKraMode === "draft" ? "bg-indigo-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>Draft</button>
+          </div>
+          <span className="text-slate-400">{bulkKraMode === "draft" ? "employees review & submit for approval" : "published straight to approved"}</span>
+        </div>
         <label className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700 hover:text-emerald-800 cursor-pointer border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 rounded-lg px-3 py-2">
           <Upload className="w-4 h-4" /> Choose Excel/CSV
           <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e => { handleBulkKRAUpload(e.target.files && e.target.files[0]); e.target.value = ""; }} />
@@ -1155,7 +1165,7 @@ function UsersAdmin({ users, setUsers, onSaved, onError, onEditUser, cycles, onU
                 <div className="flex items-center gap-2 shrink-0">
                   <Pill className={(USER_ROLE[u.role] || USER_ROLE.employee).color}>{(USER_ROLE[u.role] || USER_ROLE.employee).label}</Pill>
                   <button onClick={() => isEditing ? cancelEdit() : startEdit(u)} title={isEditing ? "Cancel edit" : "Edit user"} className={`p-1 rounded-lg transition ${isEditing ? "text-indigo-600 bg-indigo-50" : "text-slate-400 hover:text-indigo-600 hover:bg-slate-50"}`}><Edit3 className="w-4 h-4" /></button>
-                  <button onClick={() => { cancelEdit(); setKraMsg(m => ({ ...m, [u.id]: null })); setKraUploadId(kraUploadId === u.id ? null : u.id); }} title="Upload KRA" className={`p-1 rounded-lg transition ${kraUploadId === u.id ? "text-emerald-600 bg-emerald-50" : "text-slate-400 hover:text-emerald-600 hover:bg-slate-50"}`}><Upload className="w-4 h-4" /></button>
+                  <button onClick={() => { cancelEdit(); setKraMsg(m => ({ ...m, [u.id]: null })); setKraPending(m => ({ ...m, [u.id]: null })); setKraUploadId(kraUploadId === u.id ? null : u.id); }} title="Upload KRA" className={`p-1 rounded-lg transition ${kraUploadId === u.id ? "text-emerald-600 bg-emerald-50" : "text-slate-400 hover:text-emerald-600 hover:bg-slate-50"}`}><Upload className="w-4 h-4" /></button>
                   <button onClick={() => removeUser(u.id)} className="text-slate-300 hover:text-rose-500 p-1"><Trash2 className="w-4 h-4" /></button>
                 </div>
               </div>
@@ -1252,14 +1262,25 @@ function UsersAdmin({ users, setUsers, onSaved, onError, onEditUser, cycles, onU
                           if (!kras.length) { setKraMsg(m => ({ ...m, [u.id]: { ok: false, text: "No valid rows found. Download the template to see the required format." } })); return; }
                           const totalW = kras.flatMap(k => k.kpis).reduce((a, p) => a + Number(p.weightage || 0), 0);
                           if (Math.abs(totalW - 100) > 0.01) { setKraMsg(m => ({ ...m, [u.id]: { ok: false, text: `Weightage total is ${totalW.toFixed(1)}% — must be exactly 100%. Please fix and re-upload.` } })); return; }
-                          const result = onUploadKRA(u.employeeId, kras);
-                          setKraMsg(m => ({ ...m, [u.id]: result }));
+                          setKraPending(m => ({ ...m, [u.id]: kras }));
+                          setKraMsg(m => ({ ...m, [u.id]: null }));
                         } catch (err) { setKraMsg(m => ({ ...m, [u.id]: { ok: false, text: "Could not read file. Download the template and use the correct format." } })); }
                       };
                       reader.readAsArrayBuffer(file);
                       e.target.value = "";
                     }} />
                   </label>
+                  {kraPending[u.id] && (
+                    <div className="bg-white border border-emerald-200 rounded-lg p-3 space-y-2">
+                      <p className="text-xs text-slate-600">Parsed <strong>{kraPending[u.id].length} KRA{kraPending[u.id].length > 1 ? "s" : ""} · {kraPending[u.id].flatMap(k => k.kpis).length} KPI{kraPending[u.id].flatMap(k => k.kpis).length > 1 ? "s" : ""}</strong>. How should this be applied?</p>
+                      <div className="flex gap-2 flex-wrap">
+                        <button onClick={async () => { const kras = kraPending[u.id]; setKraPending(m => ({ ...m, [u.id]: null })); const result = await onUploadKRA(u.employeeId, kras, "approved"); setKraMsg(m => ({ ...m, [u.id]: result })); }} className="text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 px-3 py-1.5 rounded-lg flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Approve now</button>
+                        <button onClick={async () => { const kras = kraPending[u.id]; setKraPending(m => ({ ...m, [u.id]: null })); const result = await onUploadKRA(u.employeeId, kras, "draft"); setKraMsg(m => ({ ...m, [u.id]: result })); }} className="text-xs font-medium text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg flex items-center gap-1"><Save className="w-3.5 h-3.5" /> Save as draft</button>
+                        <button onClick={() => setKraPending(m => ({ ...m, [u.id]: null }))} className="text-xs font-medium text-slate-400 hover:text-slate-600 px-2 py-1.5">Cancel</button>
+                      </div>
+                      <p className="text-xs text-slate-400"><strong>Approve now</strong> publishes it straight to the employee's approved KRA. <strong>Save as draft</strong> puts it in their My Tasks to review &amp; submit for manager approval.</p>
+                    </div>
+                  )}
                   {kraMsg[u.id] && (
                     <p className={`text-xs flex items-center gap-1.5 font-medium ${kraMsg[u.id].ok ? "text-emerald-700" : "text-rose-600"}`}>
                       {kraMsg[u.id].ok ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 shrink-0" />}
@@ -1842,18 +1863,20 @@ export default function App() {
     onSaved("User updated.");
   };
 
-  const uploadKRA = async (employeeId, kras) => {
+  const uploadKRA = async (employeeId, kras, mode = "approved") => {
     const goalCycles = cycles.filter(c => c.type === "Goal Setting" && (c.participants || []).includes(employeeId));
     if (!goalCycles.length) {
       return { ok: false, text: "User is not enrolled in any Goal Setting cycle. Enroll them first via Cycle Management." };
     }
-    const next = { kras, status: "Approved", note: "KRA uploaded and approved by HR." };
+    const next = mode === "draft"
+      ? { kras, status: "Draft", note: "KRA sheet prepared by HR — please review and submit." }
+      : { kras, status: "Approved", note: "KRA uploaded and approved by HR.", approvedAt: new Date().toISOString() };
     goalCycles.forEach(c => setRecords(rs => ({ ...rs, [rKey(c.id, employeeId)]: next })));
     await Promise.all(goalCycles.map(c => persistRecord(c.id, employeeId, next)));
     const subject = users.find(u => u.employeeId === employeeId);
-    if (subject) goalCycles.forEach(c => notify("kra_approved", { cycle: c, subject }));
-    onSaved(`KRA uploaded & approved for ${employeeId}.`);
-    return { ok: true, text: `KRA applied to ${goalCycles.length} Goal Setting cycle${goalCycles.length > 1 ? "s" : ""} and set to Approved.` };
+    if (subject) goalCycles.forEach(c => notify(mode === "draft" ? "kra_draft" : "kra_approved", { cycle: c, subject }));
+    onSaved(mode === "draft" ? `KRA saved as draft for ${employeeId}.` : `KRA uploaded & approved for ${employeeId}.`);
+    return { ok: true, text: `KRA applied to ${goalCycles.length} Goal Setting cycle${goalCycles.length > 1 ? "s" : ""} — ${mode === "draft" ? "saved as Draft for the employee to review & submit" : "set to Approved"}.` };
   };
 
   const resetParticipant = async (cycle, employeeId) => {
@@ -1889,6 +1912,10 @@ export default function App() {
       case "kra_approved":
         push(subject.email, subject.name, `Your KRA sheet is approved — ${cy}`,
           `Hi ${subject.name},\n\nGood news — your KRA sheet for ${cy} has been approved by ${mgrName}.${sig}`);
+        break;
+      case "kra_draft":
+        push(subject.email, subject.name, `A KRA sheet is ready for you to review — ${cy}`,
+          `Hi ${subject.name},\n\nHR has prepared a KRA sheet for your ${cy} cycle. Please sign in, review it under My Tasks, and submit it for your manager's approval.${sig}`);
         break;
       case "kra_changes":
         push(subject.email, subject.name, `Changes requested on your KRA sheet — ${cy}`,
