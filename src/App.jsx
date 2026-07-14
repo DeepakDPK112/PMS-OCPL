@@ -861,7 +861,7 @@ function CyclesAdmin({ users, cycles, setCycles, onSaved, onError, notify, onRes
                       const u = users.find(x => x.employeeId === confirmReset.eid);
                       return (
                         <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mt-2 flex items-center justify-between gap-2 flex-wrap">
-                          <span className="text-xs text-amber-700">Reset <strong>{u ? u.name : confirmReset.eid}</strong>'s cycle? This clears everything they've entered and notifies them.</span>
+                          <span className="text-xs text-amber-700">Reset <strong>{u ? u.name : confirmReset.eid}</strong>'s cycle? Their KRA/self-assessment is kept but sent back to an editable draft for them to fix &amp; resubmit. They'll be notified.</span>
                           <div className="flex gap-1.5 shrink-0">
                             <button onClick={() => setConfirmReset(null)} disabled={resetting} className="text-xs font-medium text-slate-600 border border-slate-200 hover:bg-white px-2.5 py-1 rounded-lg">Cancel</button>
                             <button onClick={() => doReset(c)} disabled={resetting} className="text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 px-2.5 py-1 rounded-lg disabled:opacity-60">{resetting ? "Resetting…" : "Yes, reset"}</button>
@@ -1880,7 +1880,24 @@ export default function App() {
   };
 
   const resetParticipant = async (cycle, employeeId) => {
-    const next = defaultRecord(cycle.type);
+    const prev = records[rKey(cycle.id, employeeId)];
+    let next;
+    if (cycle.type === "Goal Setting") {
+      // Keep the KRAs that were entered/uploaded; drop back to editable Draft.
+      const kras = prev && prev.kras ? prev.kras : deep(KRA_TEMPLATE);
+      next = { kras, status: "Draft", note: "" };
+    } else {
+      // Keep the employee's self-assessment; clear manager/HR parts; back to self stage.
+      const prevReview = (prev && prev.review) || {};
+      const cleaned = {};
+      Object.entries(prevReview).forEach(([k, v]) => {
+        if (k === "__returnNote" || k === "__hrNote") return;
+        if (k === "__overall") { const { mgrComment, ...selfOverall } = v || {}; cleaned.__overall = selfOverall; return; }
+        const { mgrRating, mgrComment, ...selfPart } = v || {};
+        cleaned[k] = selfPart;
+      });
+      next = { review: cleaned, stage: "self" };
+    }
     setRecords(rs => ({ ...rs, [rKey(cycle.id, employeeId)]: next }));
     await persistRecord(cycle.id, employeeId, next);
     const subject = users.find(u => u.employeeId === employeeId);
@@ -1953,7 +1970,7 @@ export default function App() {
         break;
       case "cycle_reset":
         push(subject.email, subject.name, `Your ${cy} progress has been reset`,
-          `Hi ${subject.name},\n\nYour progress on the ${cy} cycle has been reset by HR.${note ? `\n\nNote: ${note}` : ""}\n\nPlease sign in to review and start again.${sig}`);
+          `Hi ${subject.name},\n\nYour ${cy} cycle has been sent back to draft by HR. Your entries have been kept — please sign in, make the needed corrections, and resubmit.${note ? `\n\nNote: ${note}` : ""}${sig}`);
         break;
       default:
         break;
