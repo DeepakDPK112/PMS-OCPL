@@ -76,6 +76,65 @@ const cycleWriteFields = (c) => ({
 });
 const cycleLabel = (c) => (c.name && c.name.trim()) ? c.name : `${c.type} ${c.year}`;
 
+// ---- Email templates ----
+// Editable notification templates. The DB (email_templates) stores only overrides;
+// anything not overridden falls back to these defaults. Placeholders: {employeeName},
+// {employeeId}, {cycle}, {managerName}, {hrName}, {note}.
+const DEFAULT_SIGNATURE = "\n\nThis is an automated message from the OCPL Performance Management System.";
+const EMAIL_PLACEHOLDERS = ["employeeName", "employeeId", "cycle", "managerName", "hrName", "note"];
+const EMAIL_TEMPLATE_CATALOG = [
+  { key: "enrolled_employee", event: "Enrolled in a cycle", to: "Employee",
+    subject: "You've been enrolled — {cycle}",
+    body: "Hi {employeeName},\n\nYou have been enrolled in the {cycle} cycle. Please sign in to the Performance Management System to complete your tasks." },
+  { key: "kra_submitted_manager", event: "KRA submitted", to: "Reporting Manager",
+    subject: "KRA sheet submitted for approval — {employeeName}",
+    body: "Hi {managerName},\n\n{employeeName} ({employeeId}) has submitted their KRA sheet for {cycle} and it is awaiting your approval." },
+  { key: "kra_submitted_employee", event: "KRA submitted", to: "Employee",
+    subject: "Your KRA sheet was submitted — {cycle}",
+    body: "Hi {employeeName},\n\nYour KRA sheet for {cycle} has been submitted to {managerName} for approval. You'll be notified once it's reviewed." },
+  { key: "kra_approved_employee", event: "KRA approved", to: "Employee",
+    subject: "Your KRA sheet is approved — {cycle}",
+    body: "Hi {employeeName},\n\nGood news — your KRA sheet for {cycle} has been approved by {managerName}." },
+  { key: "kra_changes_employee", event: "KRA changes requested", to: "Employee",
+    subject: "Changes requested on your KRA sheet — {cycle}",
+    body: "Hi {employeeName},\n\n{managerName} has requested changes to your KRA sheet for {cycle}. Please revise and resubmit.\n\n{note}" },
+  { key: "kra_draft_employee", event: "KRA saved as draft by HR", to: "Employee",
+    subject: "A KRA sheet is ready for you to review — {cycle}",
+    body: "Hi {employeeName},\n\nHR has prepared a KRA sheet for your {cycle} cycle. Please sign in, review it under My Tasks, and submit it for your manager's approval." },
+  { key: "self_submitted_manager", event: "Self-assessment submitted", to: "Reporting Manager",
+    subject: "Self-assessment submitted — {employeeName}",
+    body: "Hi {managerName},\n\n{employeeName} ({employeeId}) has submitted their self-assessment for {cycle} and it is ready for your review." },
+  { key: "self_submitted_employee", event: "Self-assessment submitted", to: "Employee",
+    subject: "Self-assessment submitted — {cycle}",
+    body: "Hi {employeeName},\n\nYour self-assessment for {cycle} has been submitted to {managerName}." },
+  { key: "review_to_hr_hr", event: "Review sent to HR", to: "HR",
+    subject: "Review pending HR approval — {employeeName}",
+    body: "Hi {hrName},\n\nThe {cycle} review for {employeeName} ({employeeId}) has been completed by {managerName} and is awaiting HR approval." },
+  { key: "review_to_hr_employee", event: "Review sent to HR", to: "Employee",
+    subject: "Your review is pending HR approval — {cycle}",
+    body: "Hi {employeeName},\n\n{managerName} has completed your {cycle} review. It is now pending HR approval; your final scores will be released once approved." },
+  { key: "midyear_complete_employee", event: "Mid-year review complete", to: "Employee",
+    subject: "Your review is complete — {cycle}",
+    body: "Hi {employeeName},\n\nYour {cycle} review has been completed by {managerName}." },
+  { key: "review_returned_employee", event: "Review returned by manager", to: "Employee",
+    subject: "Review returned for revision — {cycle}",
+    body: "Hi {employeeName},\n\n{managerName} has returned your {cycle} review for revision. Please revise and resubmit.\n\n{note}" },
+  { key: "hr_approved_employee", event: "Review approved by HR", to: "Employee",
+    subject: "Your review is approved & released — {cycle}",
+    body: "Hi {employeeName},\n\nYour {cycle} review has been approved by HR and your final scores are now released." },
+  { key: "hr_approved_manager", event: "Review approved by HR", to: "Reporting Manager",
+    subject: "Review approved by HR — {employeeName}",
+    body: "Hi {managerName},\n\nThe {cycle} review for {employeeName} has been approved and released by HR." },
+  { key: "hr_rejected_manager", event: "Review returned by HR", to: "Reporting Manager",
+    subject: "Review returned by HR — {employeeName}",
+    body: "Hi {managerName},\n\nHR has returned the {cycle} review for {employeeName} ({employeeId}) for changes.\n\n{note}" },
+  { key: "cycle_reset_employee", event: "Cycle reset by HR", to: "Employee",
+    subject: "Your {cycle} progress has been reset",
+    body: "Hi {employeeName},\n\nYour {cycle} cycle has been sent back to draft by HR. Your entries have been kept — please sign in, make the needed corrections, and resubmit.\n\n{note}" },
+];
+const EMAIL_TEMPLATE_DEFAULTS = Object.fromEntries(EMAIL_TEMPLATE_CATALOG.map(t => [t.key, { subject: t.subject, body: t.body }]));
+const fillTemplate = (str, vars) => (str || "").replace(/\{(\w+)\}/g, (_, k) => (vars[k] != null ? String(vars[k]) : "")).replace(/\n{3,}/g, "\n\n").trim();
+
 // ---- small UI ----
 function Pill({ children, className }) { return <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border ${className}`}>{children}</span>; }
 function WeightBadge({ w }) { return <Pill className="bg-violet-50 text-violet-700 border-violet-200">{w}%</Pill>; }
@@ -1637,6 +1696,55 @@ function ReportsPage({ users, cycles, records }) {
   );
 }
 
+function TemplateEditor({ label, to, hasSubject, currentSubject, currentBody, defaultSubject, defaultBody, isOverridden, onSave, onReset }) {
+  const [subj, setSubj] = useState(currentSubject || "");
+  const [body, setBody] = useState(currentBody || "");
+  useEffect(() => { setSubj(currentSubject || ""); setBody(currentBody || ""); }, [currentSubject, currentBody]);
+  const dirty = subj !== (currentSubject || "") || body !== (currentBody || "");
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap"><span className="text-sm font-medium text-slate-800">{label}</span>{to && <Pill className="bg-slate-100 text-slate-600 border-slate-200">To: {to}</Pill>}</div>
+        {isOverridden && <span className="text-xs font-medium text-amber-600">Customized</span>}
+      </div>
+      {hasSubject && (
+        <div><label className="text-xs text-slate-500 block mb-1">Subject</label>
+          <input value={subj} onChange={e => setSubj(e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-200" /></div>
+      )}
+      <div><label className="text-xs text-slate-500 block mb-1">Body</label>
+        <textarea value={body} onChange={e => setBody(e.target.value)} rows={hasSubject ? 5 : 3} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 resize-y focus:outline-none focus:ring-2 focus:ring-indigo-200" /></div>
+      <div className="flex gap-2">
+        <button onClick={() => onSave(subj, body)} disabled={!dirty} className={`text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1 ${dirty ? "bg-indigo-600 hover:bg-indigo-700 text-white" : "bg-slate-100 text-slate-400 cursor-not-allowed"}`}><Save className="w-3.5 h-3.5" /> Save</button>
+        <button onClick={onReset} disabled={!isOverridden} className={`text-xs font-medium px-3 py-1.5 rounded-lg border ${isOverridden ? "border-slate-200 text-slate-600 hover:bg-slate-50" : "border-slate-100 text-slate-300 cursor-not-allowed"}`}>Reset to default</button>
+      </div>
+    </div>
+  );
+}
+
+function EmailTemplatesPage({ templates, onSave, onReset }) {
+  const sigOverride = templates.__signature;
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2"><Mail className="w-5 h-5 text-indigo-600" /><h2 className="text-lg font-semibold text-slate-800">Email Templates</h2></div>
+      <Notice icon={AlertCircle}>
+        <div>Edit the notification emails sent for each workflow action. These placeholders are filled in automatically when an email is sent:</div>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">{EMAIL_PLACEHOLDERS.map(p => <code key={p} className="text-xs bg-slate-100 border border-slate-200 rounded px-1.5 py-0.5">{`{${p}}`}</code>)}</div>
+      </Notice>
+      <TemplateEditor label="Signature (appended to every email)" to="" hasSubject={false}
+        currentSubject="" currentBody={sigOverride && sigOverride.body != null ? sigOverride.body : DEFAULT_SIGNATURE}
+        defaultSubject="" defaultBody={DEFAULT_SIGNATURE} isOverridden={!!sigOverride}
+        onSave={(s, b) => onSave("__signature", null, b)} onReset={() => onReset("__signature")} />
+      {EMAIL_TEMPLATE_CATALOG.map(t => {
+        const ov = templates[t.key];
+        return <TemplateEditor key={t.key} label={t.event} to={t.to} hasSubject={true}
+          currentSubject={ov ? ov.subject : t.subject} currentBody={ov ? ov.body : t.body}
+          defaultSubject={t.subject} defaultBody={t.body} isOverridden={!!ov}
+          onSave={(s, b) => onSave(t.key, s, b)} onReset={() => onReset(t.key)} />;
+      })}
+    </div>
+  );
+}
+
 function HomeDashboard({ me, cycles, go }) {
   const myActive = cycles.filter(c => c.status === "Active" && (c.participants || []).includes(me.employeeId)).length;
   return (
@@ -1659,6 +1767,7 @@ function HomeDashboard({ me, cycles, go }) {
           <button onClick={() => go("approvals")} className="text-left bg-white rounded-xl border border-slate-200 p-5 hover:border-indigo-300 transition"><div className="flex items-center gap-2 mb-1"><ShieldCheck className="w-5 h-5 text-indigo-600" /><span className="font-medium text-slate-800">Approvals</span></div><p className="text-sm text-slate-500">Approve annual reviews pending HR.</p></button>
           <button onClick={() => go("users")} className="text-left bg-white rounded-xl border border-slate-200 p-5 hover:border-indigo-300 transition"><div className="flex items-center gap-2 mb-1"><Users className="w-5 h-5 text-indigo-600" /><span className="font-medium text-slate-800">User Management</span></div><p className="text-sm text-slate-500">Add, bulk-upload, or remove users.</p></button>
           <button onClick={() => go("reports")} className="text-left bg-white rounded-xl border border-slate-200 p-5 hover:border-indigo-300 transition"><div className="flex items-center gap-2 mb-1"><BarChart2 className="w-5 h-5 text-indigo-600" /><span className="font-medium text-slate-800">Reports</span></div><p className="text-sm text-slate-500">KRA, ratings & cycle completion reports.</p></button>
+          <button onClick={() => go("templates")} className="text-left bg-white rounded-xl border border-slate-200 p-5 hover:border-indigo-300 transition"><div className="flex items-center gap-2 mb-1"><Mail className="w-5 h-5 text-indigo-600" /><span className="font-medium text-slate-800">Email Templates</span></div><p className="text-sm text-slate-500">Edit notification email wording.</p></button>
         </>}
       </div>
     </div>
@@ -1766,6 +1875,7 @@ export default function App() {
   const [cycles, setCycles] = useState([]);
   const [records, setRecords] = useState({});
   const [emails, setEmails] = useState([]);
+  const [emailTemplates, setEmailTemplates] = useState({});
   const [currentUserId, setCurrentUserId] = useState(() => {
     try { return localStorage.getItem("pms:currentUserId") || null; } catch (e) { return null; }
   });
@@ -1776,13 +1886,14 @@ export default function App() {
   const pendingWrites = useRef({});
 
   const refetchAll = async () => {
-    const [usersRes, cyclesRes, recordsRes, emailsRes] = await Promise.all([
+    const [usersRes, cyclesRes, recordsRes, emailsRes, tplRes] = await Promise.all([
       supabase.rpc("list_users"),
       supabase.from("cycles").select("*"),
       supabase.from("records").select("*"),
       supabase.from("emails").select("*").order("sent_at", { ascending: false }),
+      supabase.from("email_templates").select("*"),
     ]);
-    const firstError = usersRes.error || cyclesRes.error || recordsRes.error || emailsRes.error;
+    const firstError = usersRes.error || cyclesRes.error || recordsRes.error || emailsRes.error || tplRes.error;
     if (firstError) throw firstError;
     setUsers((usersRes.data || []).map(mapUserRow));
     setCycles((cyclesRes.data || []).map(mapCycleRow));
@@ -1790,6 +1901,9 @@ export default function App() {
     (recordsRes.data || []).forEach(r => { recMap[rKey(r.cycle_id, r.employee_id)] = r.data; });
     setRecords(recMap);
     setEmails((emailsRes.data || []).map(mapEmailRow));
+    const tplMap = {};
+    (tplRes.data || []).forEach(r => { tplMap[r.key] = { subject: r.subject, body: r.body }; });
+    setEmailTemplates(tplMap);
   };
 
   useEffect(() => {
@@ -1905,6 +2019,9 @@ export default function App() {
     onSaved(`Reset ${subject ? subject.name : employeeId}'s cycle.`);
   };
 
+  const tpl = (key) => emailTemplates[key] || EMAIL_TEMPLATE_DEFAULTS[key];
+  const emailSignature = () => (emailTemplates.__signature && emailTemplates.__signature.body != null ? emailTemplates.__signature.body : DEFAULT_SIGNATURE);
+
   const composeEmails = (event, ctx) => {
     const { cycle, subject, note } = ctx || {};
     if (!subject) return [];
@@ -1912,68 +2029,34 @@ export default function App() {
     const mgrTo = subject.reportingManagerEmail;
     const mgrName = subject.reportingManager;
     const hrUsers = users.filter(u => u.role === "hr");
+    const baseVars = { employeeName: subject.name, employeeId: subject.employeeId, cycle: cy, managerName: mgrName, note: note || "" };
+    const sig = emailSignature();
     const out = [];
-    const push = (to, toName, subj, body) => { if (to && to !== "—") out.push({ to, toName, subject: subj, body }); };
-    const sig = "\n\nThis is an automated message from the OCPL Performance Management System.";
-    switch (event) {
-      case "enrolled":
-        push(subject.email, subject.name, `You've been enrolled — ${cy}`,
-          `Hi ${subject.name},\n\nYou have been enrolled in the ${cy} cycle. Please sign in to the Performance Management System to complete your tasks.${sig}`);
-        break;
-      case "kra_submitted":
-        push(mgrTo, mgrName, `KRA sheet submitted for approval — ${subject.name}`,
-          `Hi ${mgrName},\n\n${subject.name} (${subject.employeeId}) has submitted their KRA sheet for ${cy} and it is awaiting your approval.${sig}`);
-        push(subject.email, subject.name, `Your KRA sheet was submitted — ${cy}`,
-          `Hi ${subject.name},\n\nYour KRA sheet for ${cy} has been submitted to ${mgrName} for approval. You'll be notified once it's reviewed.${sig}`);
-        break;
-      case "kra_approved":
-        push(subject.email, subject.name, `Your KRA sheet is approved — ${cy}`,
-          `Hi ${subject.name},\n\nGood news — your KRA sheet for ${cy} has been approved by ${mgrName}.${sig}`);
-        break;
-      case "kra_draft":
-        push(subject.email, subject.name, `A KRA sheet is ready for you to review — ${cy}`,
-          `Hi ${subject.name},\n\nHR has prepared a KRA sheet for your ${cy} cycle. Please sign in, review it under My Tasks, and submit it for your manager's approval.${sig}`);
-        break;
-      case "kra_changes":
-        push(subject.email, subject.name, `Changes requested on your KRA sheet — ${cy}`,
-          `Hi ${subject.name},\n\n${mgrName} has requested changes to your KRA sheet for ${cy}.${note ? `\n\nManager's note: ${note}` : ""}\n\nPlease revise and resubmit.${sig}`);
-        break;
-      case "self_submitted":
-        push(mgrTo, mgrName, `Self-assessment submitted — ${subject.name}`,
-          `Hi ${mgrName},\n\n${subject.name} (${subject.employeeId}) has submitted their self-assessment for ${cy} and it is ready for your review.${sig}`);
-        push(subject.email, subject.name, `Self-assessment submitted — ${cy}`,
-          `Hi ${subject.name},\n\nYour self-assessment for ${cy} has been submitted to ${mgrName}.${sig}`);
-        break;
-      case "review_to_hr":
-        hrUsers.forEach(h => push(h.email, h.name, `Review pending HR approval — ${subject.name}`,
-          `Hi ${h.name},\n\nThe ${cy} review for ${subject.name} (${subject.employeeId}) has been completed by ${mgrName} and is awaiting HR approval.${sig}`));
-        push(subject.email, subject.name, `Your review is pending HR approval — ${cy}`,
-          `Hi ${subject.name},\n\n${mgrName} has completed your ${cy} review. It is now pending HR approval; your final scores will be released once approved.${sig}`);
-        break;
-      case "midyear_complete":
-        push(subject.email, subject.name, `Your review is complete — ${cy}`,
-          `Hi ${subject.name},\n\nYour ${cy} review has been completed by ${mgrName}.${sig}`);
-        break;
-      case "review_returned":
-        push(subject.email, subject.name, `Review returned for revision — ${cy}`,
-          `Hi ${subject.name},\n\n${mgrName} has returned your ${cy} review for revision.${note ? `\n\nManager's note: ${note}` : ""}\n\nPlease revise and resubmit.${sig}`);
-        break;
-      case "hr_approved":
-        push(subject.email, subject.name, `Your review is approved & released — ${cy}`,
-          `Hi ${subject.name},\n\nYour ${cy} review has been approved by HR and your final scores are now released.${sig}`);
-        push(mgrTo, mgrName, `Review approved by HR — ${subject.name}`,
-          `Hi ${mgrName},\n\nThe ${cy} review for ${subject.name} has been approved and released by HR.${sig}`);
-        break;
-      case "hr_rejected":
-        push(mgrTo, mgrName, `Review returned by HR — ${subject.name}`,
-          `Hi ${mgrName},\n\nHR has returned the ${cy} review for ${subject.name} (${subject.employeeId}) for changes.${note ? `\n\nHR note: ${note}` : ""}${sig}`);
-        break;
-      case "cycle_reset":
-        push(subject.email, subject.name, `Your ${cy} progress has been reset`,
-          `Hi ${subject.name},\n\nYour ${cy} cycle has been sent back to draft by HR. Your entries have been kept — please sign in, make the needed corrections, and resubmit.${note ? `\n\nNote: ${note}` : ""}${sig}`);
-        break;
-      default:
-        break;
+    const emit = (key, to, toName, extraVars) => {
+      if (!to || to === "—") return;
+      const t = tpl(key); if (!t) return;
+      const vars = { ...baseVars, ...(extraVars || {}) };
+      out.push({ to, toName, subject: fillTemplate(t.subject, vars), body: fillTemplate(t.body, vars) + sig });
+    };
+    // Each event maps to one or more template slots + their recipients.
+    const routes = {
+      enrolled:         [["enrolled_employee", subject.email, subject.name]],
+      kra_submitted:    [["kra_submitted_manager", mgrTo, mgrName], ["kra_submitted_employee", subject.email, subject.name]],
+      kra_approved:     [["kra_approved_employee", subject.email, subject.name]],
+      kra_draft:        [["kra_draft_employee", subject.email, subject.name]],
+      kra_changes:      [["kra_changes_employee", subject.email, subject.name]],
+      self_submitted:   [["self_submitted_manager", mgrTo, mgrName], ["self_submitted_employee", subject.email, subject.name]],
+      midyear_complete: [["midyear_complete_employee", subject.email, subject.name]],
+      review_returned:  [["review_returned_employee", subject.email, subject.name]],
+      hr_approved:      [["hr_approved_employee", subject.email, subject.name], ["hr_approved_manager", mgrTo, mgrName]],
+      hr_rejected:      [["hr_rejected_manager", mgrTo, mgrName]],
+      cycle_reset:      [["cycle_reset_employee", subject.email, subject.name]],
+    };
+    if (event === "review_to_hr") {
+      hrUsers.forEach(h => emit("review_to_hr_hr", h.email, h.name, { hrName: h.name }));
+      emit("review_to_hr_employee", subject.email, subject.name);
+    } else {
+      (routes[event] || []).forEach(([key, to, toName]) => emit(key, to, toName));
     }
     return out;
   };
@@ -1987,6 +2070,21 @@ export default function App() {
     supabase.from("emails").insert(rows.map(r => ({
       from: r.from, to: r.to, to_name: r.toName, subject: r.subject, body: r.body, event: r.event, sent_at: r.sentAt,
     }))).then(({ error }) => { if (error) console.error("Failed to persist notification email", error); });
+    // Fire real email delivery via the send-email Edge Function (no-op until that function is deployed).
+    supabase.functions.invoke("send-email", {
+      body: { emails: rows.map(r => ({ to: r.to, toName: r.toName, subject: r.subject, body: r.body })) },
+    }).catch((err) => console.error("Email delivery failed", err));
+  };
+
+  const saveTemplate = async (key, subject, body) => {
+    setEmailTemplates(m => ({ ...m, [key]: { subject, body } }));
+    const { error } = await supabase.from("email_templates").upsert({ key, subject, body, updated_at: new Date().toISOString() }, { onConflict: "key" });
+    if (error) showError("Couldn't save the template — please retry."); else onSaved("Template saved.");
+  };
+  const resetTemplate = async (key) => {
+    setEmailTemplates(m => { const n = { ...m }; delete n[key]; return n; });
+    const { error } = await supabase.from("email_templates").delete().eq("key", key);
+    if (error) showError("Couldn't reset the template — please retry."); else onSaved("Template reset to default.");
   };
 
   if (!loaded) return <div className="min-h-screen bg-slate-50" />;
@@ -2000,7 +2098,7 @@ export default function App() {
   const myEmailCount = emails.filter(e => (e.to || "").toLowerCase() === (me.email || "").toLowerCase()).length;
   const hasApprovedKRA = cycles.some(c => c.type === "Goal Setting" && (c.participants || []).includes(me.employeeId) && records[rKey(c.id, me.employeeId)]?.status === "Approved");
   const baseTabs = me.role === "hr"
-    ? [{ id: "home", label: "Home" }, { id: "cycles", label: "Cycles" }, { id: "approvals", label: "Approvals" }, { id: "users", label: "Users" }, { id: "reports", label: "Reports" }]
+    ? [{ id: "home", label: "Home" }, { id: "cycles", label: "Cycles" }, { id: "approvals", label: "Approvals" }, { id: "users", label: "Users" }, { id: "reports", label: "Reports" }, { id: "templates", label: "Templates" }]
     : me.role === "manager"
       ? [{ id: "home", label: "Home" }, { id: "tasks", label: "My Tasks" }, { id: "team", label: "Team" }, { id: "completed", label: "Completed" }, ...(hasApprovedKRA ? [{ id: "mykra", label: "My KRA" }] : [])]
       : [{ id: "home", label: "Home" }, { id: "tasks", label: "My Tasks" }, { id: "completed", label: "Completed" }, ...(hasApprovedKRA ? [{ id: "mykra", label: "My KRA" }] : [])];
@@ -2035,6 +2133,7 @@ export default function App() {
         {view === "mykra" && <ApprovedKRAPage me={me} cycles={cycles} records={records} />}
         {view === "inbox" && <InboxPage me={me} emails={emails} isHR={me.role === "hr"} />}
         {view === "reports" && <ReportsPage users={users} cycles={cycles} records={records} />}
+        {view === "templates" && <EmailTemplatesPage templates={emailTemplates} onSave={saveTemplate} onReset={resetTemplate} />}
       </main>
     </div>
   );
