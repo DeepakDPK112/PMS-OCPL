@@ -2049,7 +2049,7 @@ export default function App() {
   const composeEmails = (event, ctx) => {
     const { cycle, subject, note } = ctx || {};
     if (!subject) return [];
-    if (emailTemplates.__master && emailTemplates.__master.enabled === false) return []; // master OFF
+    const masterOn = !(emailTemplates.__master && emailTemplates.__master.enabled === false);
     const cy = cycle ? cycleLabel(cycle) : "the cycle";
     const mgrTo = subject.reportingManagerEmail;
     const mgrName = subject.reportingManager;
@@ -2057,12 +2057,13 @@ export default function App() {
     const baseVars = { employeeName: subject.name, employeeId: subject.employeeId, cycle: cy, managerName: mgrName, note: note || "", loginUrl: PMS_LOGIN_URL };
     const sig = emailSignature();
     const out = [];
+    // Every notification is still logged to the in-app Inbox; `deliver` controls whether
+    // the real email is sent (off when the master switch or this template is turned off).
     const emit = (key, to, toName, extraVars) => {
       if (!to || to === "—") return;
-      if (!isTemplateEnabled(key)) return; // per-template OFF → no email, no inbox entry
       const t = tpl(key);
       const vars = { ...baseVars, ...(extraVars || {}) };
-      out.push({ to, toName, subject: fillTemplate(t.subject, vars), body: fillTemplate(t.body, vars) + "\n\n" + fillTemplate(sig, vars) });
+      out.push({ to, toName, subject: fillTemplate(t.subject, vars), body: fillTemplate(t.body, vars) + "\n\n" + fillTemplate(sig, vars), deliver: masterOn && isTemplateEnabled(key) });
     };
     // Each event maps to one or more template slots + their recipients.
     const routes = {
@@ -2096,10 +2097,14 @@ export default function App() {
     supabase.from("emails").insert(rows.map(r => ({
       from: r.from, to: r.to, to_name: r.toName, subject: r.subject, body: r.body, event: r.event, sent_at: r.sentAt,
     }))).then(({ error }) => { if (error) console.error("Failed to persist notification email", error); });
-    // Fire real email delivery via the send-email Edge Function (no-op until that function is deployed).
-    supabase.functions.invoke("send-email", {
-      body: { emails: rows.map(r => ({ to: r.to, toName: r.toName, subject: r.subject, body: r.body })) },
-    }).catch((err) => console.error("Email delivery failed", err));
+    // Real email delivery via the send-email Edge Function — only for notifications whose
+    // template (and the master switch) is on. Disabled ones stay as Inbox-only audit records.
+    const toDeliver = rows.filter(r => r.deliver);
+    if (toDeliver.length) {
+      supabase.functions.invoke("send-email", {
+        body: { emails: toDeliver.map(r => ({ to: r.to, toName: r.toName, subject: r.subject, body: r.body })) },
+      }).catch((err) => console.error("Email delivery failed", err));
+    }
   };
 
   const upsertTemplate = async (key, fields, savedMsg) => {
