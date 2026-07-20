@@ -80,8 +80,9 @@ const cycleLabel = (c) => (c.name && c.name.trim()) ? c.name : `${c.type} ${c.ye
 // Editable notification templates. The DB (email_templates) stores only overrides;
 // anything not overridden falls back to these defaults. Placeholders: {employeeName},
 // {employeeId}, {cycle}, {managerName}, {hrName}, {note}.
-const DEFAULT_SIGNATURE = "\n\nThis is an automated message from the OCPL Performance Management System.";
-const EMAIL_PLACEHOLDERS = ["employeeName", "employeeId", "cycle", "managerName", "hrName", "note"];
+const PMS_LOGIN_URL = "https://pms-ocpl.vercel.app";
+const DEFAULT_SIGNATURE = "Sign in to the Performance Management System: {loginUrl}\n\nThis is an automated message from the OCPL Performance Management System.";
+const EMAIL_PLACEHOLDERS = ["employeeName", "employeeId", "cycle", "managerName", "hrName", "note", "loginUrl"];
 const EMAIL_TEMPLATE_CATALOG = [
   { key: "enrolled_employee", event: "Enrolled in a cycle", to: "Employee",
     subject: "You've been enrolled — {cycle}",
@@ -1696,16 +1697,25 @@ function ReportsPage({ users, cycles, records }) {
   );
 }
 
-function TemplateEditor({ label, to, hasSubject, currentSubject, currentBody, defaultSubject, defaultBody, isOverridden, onSave, onReset }) {
+function Switch({ on, onChange, label }) {
+  return (
+    <button onClick={() => onChange(!on)} title={label} aria-pressed={on} className={`relative inline-flex items-center h-5 w-9 rounded-full transition shrink-0 ${on ? "bg-emerald-500" : "bg-slate-300"}`}>
+      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${on ? "translate-x-4" : "translate-x-0.5"}`} />
+    </button>
+  );
+}
+
+function TemplateEditor({ label, to, hasSubject, currentSubject, currentBody, isOverridden, canReset, canToggle, enabled, onSave, onReset, onToggle }) {
   const [subj, setSubj] = useState(currentSubject || "");
   const [body, setBody] = useState(currentBody || "");
   useEffect(() => { setSubj(currentSubject || ""); setBody(currentBody || ""); }, [currentSubject, currentBody]);
   const dirty = subj !== (currentSubject || "") || body !== (currentBody || "");
+  const off = canToggle && !enabled;
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-2">
+    <div className={`bg-white rounded-xl border border-slate-200 p-4 space-y-2 ${off ? "opacity-60" : ""}`}>
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="flex items-center gap-2 flex-wrap"><span className="text-sm font-medium text-slate-800">{label}</span>{to && <Pill className="bg-slate-100 text-slate-600 border-slate-200">To: {to}</Pill>}</div>
-        {isOverridden && <span className="text-xs font-medium text-amber-600">Customized</span>}
+        <div className="flex items-center gap-2 flex-wrap"><span className="text-sm font-medium text-slate-800">{label}</span>{to && <Pill className="bg-slate-100 text-slate-600 border-slate-200">To: {to}</Pill>}{isOverridden && <span className="text-xs font-medium text-amber-600">Customized</span>}</div>
+        {canToggle && <div className="flex items-center gap-1.5"><span className={`text-xs font-medium ${enabled ? "text-emerald-600" : "text-slate-400"}`}>{enabled ? "On" : "Off"}</span><Switch on={enabled} onChange={onToggle} label="Turn this email on/off" /></div>}
       </div>
       {hasSubject && (
         <div><label className="text-xs text-slate-500 block mb-1">Subject</label>
@@ -1715,31 +1725,40 @@ function TemplateEditor({ label, to, hasSubject, currentSubject, currentBody, de
         <textarea value={body} onChange={e => setBody(e.target.value)} rows={hasSubject ? 5 : 3} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 resize-y focus:outline-none focus:ring-2 focus:ring-indigo-200" /></div>
       <div className="flex gap-2">
         <button onClick={() => onSave(subj, body)} disabled={!dirty} className={`text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1 ${dirty ? "bg-indigo-600 hover:bg-indigo-700 text-white" : "bg-slate-100 text-slate-400 cursor-not-allowed"}`}><Save className="w-3.5 h-3.5" /> Save</button>
-        <button onClick={onReset} disabled={!isOverridden} className={`text-xs font-medium px-3 py-1.5 rounded-lg border ${isOverridden ? "border-slate-200 text-slate-600 hover:bg-slate-50" : "border-slate-100 text-slate-300 cursor-not-allowed"}`}>Reset to default</button>
+        <button onClick={onReset} disabled={!canReset} className={`text-xs font-medium px-3 py-1.5 rounded-lg border ${canReset ? "border-slate-200 text-slate-600 hover:bg-slate-50" : "border-slate-100 text-slate-300 cursor-not-allowed"}`}>Reset to default</button>
       </div>
     </div>
   );
 }
 
-function EmailTemplatesPage({ templates, onSave, onReset }) {
+function EmailTemplatesPage({ templates, onSave, onReset, onToggle }) {
+  const masterOn = templates.__master?.enabled !== false;
   const sigOverride = templates.__signature;
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2"><Mail className="w-5 h-5 text-indigo-600" /><h2 className="text-lg font-semibold text-slate-800">Email Templates</h2></div>
+      <div className="bg-white rounded-xl border border-slate-200 p-4 flex items-center justify-between gap-3">
+        <div><div className="text-sm font-medium text-slate-800">All email notifications</div><p className="text-xs text-slate-500">Master switch — when off, no emails or in-app notifications are sent for any event.</p></div>
+        <div className="flex items-center gap-1.5"><span className={`text-xs font-medium ${masterOn ? "text-emerald-600" : "text-slate-400"}`}>{masterOn ? "On" : "Off"}</span><Switch on={masterOn} onChange={(v) => onToggle("__master", v)} label="Master email switch" /></div>
+      </div>
+      {!masterOn && <Notice icon={AlertCircle} tone="amber">All email notifications are currently turned OFF. The per-template switches below have no effect until the master switch is on.</Notice>}
       <Notice icon={AlertCircle}>
         <div>Edit the notification emails sent for each workflow action. These placeholders are filled in automatically when an email is sent:</div>
         <div className="mt-1.5 flex flex-wrap gap-1.5">{EMAIL_PLACEHOLDERS.map(p => <code key={p} className="text-xs bg-slate-100 border border-slate-200 rounded px-1.5 py-0.5">{`{${p}}`}</code>)}</div>
       </Notice>
       <TemplateEditor label="Signature (appended to every email)" to="" hasSubject={false}
         currentSubject="" currentBody={sigOverride && sigOverride.body != null ? sigOverride.body : DEFAULT_SIGNATURE}
-        defaultSubject="" defaultBody={DEFAULT_SIGNATURE} isOverridden={!!sigOverride}
+        isOverridden={!!(sigOverride && sigOverride.body != null)} canReset={!!sigOverride} canToggle={false}
         onSave={(s, b) => onSave("__signature", null, b)} onReset={() => onReset("__signature")} />
       {EMAIL_TEMPLATE_CATALOG.map(t => {
         const ov = templates[t.key];
+        const textOverridden = !!(ov && (ov.subject != null || ov.body != null));
+        const enabled = ov?.enabled !== false;
         return <TemplateEditor key={t.key} label={t.event} to={t.to} hasSubject={true}
-          currentSubject={ov ? ov.subject : t.subject} currentBody={ov ? ov.body : t.body}
-          defaultSubject={t.subject} defaultBody={t.body} isOverridden={!!ov}
-          onSave={(s, b) => onSave(t.key, s, b)} onReset={() => onReset(t.key)} />;
+          currentSubject={ov && ov.subject != null ? ov.subject : t.subject}
+          currentBody={ov && ov.body != null ? ov.body : t.body}
+          isOverridden={textOverridden} canReset={!!ov} canToggle={true} enabled={enabled}
+          onSave={(s, b) => onSave(t.key, s, b)} onReset={() => onReset(t.key)} onToggle={(v) => onToggle(t.key, v)} />;
       })}
     </div>
   );
@@ -1902,7 +1921,7 @@ export default function App() {
     setRecords(recMap);
     setEmails((emailsRes.data || []).map(mapEmailRow));
     const tplMap = {};
-    (tplRes.data || []).forEach(r => { tplMap[r.key] = { subject: r.subject, body: r.body }; });
+    (tplRes.data || []).forEach(r => { tplMap[r.key] = { subject: r.subject, body: r.body, enabled: r.enabled }; });
     setEmailTemplates(tplMap);
   };
 
@@ -2019,24 +2038,31 @@ export default function App() {
     onSaved(`Reset ${subject ? subject.name : employeeId}'s cycle.`);
   };
 
-  const tpl = (key) => emailTemplates[key] || EMAIL_TEMPLATE_DEFAULTS[key];
+  const tpl = (key) => {
+    const ov = emailTemplates[key] || {};
+    const def = EMAIL_TEMPLATE_DEFAULTS[key] || { subject: "", body: "" };
+    return { subject: ov.subject != null ? ov.subject : def.subject, body: ov.body != null ? ov.body : def.body };
+  };
+  const isTemplateEnabled = (key) => emailTemplates[key]?.enabled !== false; // default ON
   const emailSignature = () => (emailTemplates.__signature && emailTemplates.__signature.body != null ? emailTemplates.__signature.body : DEFAULT_SIGNATURE);
 
   const composeEmails = (event, ctx) => {
     const { cycle, subject, note } = ctx || {};
     if (!subject) return [];
+    if (emailTemplates.__master && emailTemplates.__master.enabled === false) return []; // master OFF
     const cy = cycle ? cycleLabel(cycle) : "the cycle";
     const mgrTo = subject.reportingManagerEmail;
     const mgrName = subject.reportingManager;
     const hrUsers = users.filter(u => u.role === "hr");
-    const baseVars = { employeeName: subject.name, employeeId: subject.employeeId, cycle: cy, managerName: mgrName, note: note || "" };
+    const baseVars = { employeeName: subject.name, employeeId: subject.employeeId, cycle: cy, managerName: mgrName, note: note || "", loginUrl: PMS_LOGIN_URL };
     const sig = emailSignature();
     const out = [];
     const emit = (key, to, toName, extraVars) => {
       if (!to || to === "—") return;
-      const t = tpl(key); if (!t) return;
+      if (!isTemplateEnabled(key)) return; // per-template OFF → no email, no inbox entry
+      const t = tpl(key);
       const vars = { ...baseVars, ...(extraVars || {}) };
-      out.push({ to, toName, subject: fillTemplate(t.subject, vars), body: fillTemplate(t.body, vars) + sig });
+      out.push({ to, toName, subject: fillTemplate(t.subject, vars), body: fillTemplate(t.body, vars) + "\n\n" + fillTemplate(sig, vars) });
     };
     // Each event maps to one or more template slots + their recipients.
     const routes = {
@@ -2076,11 +2102,21 @@ export default function App() {
     }).catch((err) => console.error("Email delivery failed", err));
   };
 
-  const saveTemplate = async (key, subject, body) => {
-    setEmailTemplates(m => ({ ...m, [key]: { subject, body } }));
-    const { error } = await supabase.from("email_templates").upsert({ key, subject, body, updated_at: new Date().toISOString() }, { onConflict: "key" });
-    if (error) showError("Couldn't save the template — please retry."); else onSaved("Template saved.");
+  const upsertTemplate = async (key, fields, savedMsg) => {
+    const cur = emailTemplates[key] || {};
+    const row = {
+      key,
+      subject: fields.subject !== undefined ? fields.subject : (cur.subject != null ? cur.subject : null),
+      body: fields.body !== undefined ? fields.body : (cur.body != null ? cur.body : null),
+      enabled: fields.enabled !== undefined ? fields.enabled : (cur.enabled !== undefined ? cur.enabled : true),
+      updated_at: new Date().toISOString(),
+    };
+    setEmailTemplates(m => ({ ...m, [key]: { subject: row.subject, body: row.body, enabled: row.enabled } }));
+    const { error } = await supabase.from("email_templates").upsert(row, { onConflict: "key" });
+    if (error) showError("Couldn't save — please retry."); else if (savedMsg) onSaved(savedMsg);
   };
+  const saveTemplate = (key, subject, body) => upsertTemplate(key, { subject, body }, "Template saved.");
+  const toggleTemplate = (key, enabled) => upsertTemplate(key, { enabled }, enabled ? "Template turned on." : "Template turned off.");
   const resetTemplate = async (key) => {
     setEmailTemplates(m => { const n = { ...m }; delete n[key]; return n; });
     const { error } = await supabase.from("email_templates").delete().eq("key", key);
@@ -2133,7 +2169,7 @@ export default function App() {
         {view === "mykra" && <ApprovedKRAPage me={me} cycles={cycles} records={records} />}
         {view === "inbox" && <InboxPage me={me} emails={emails} isHR={me.role === "hr"} />}
         {view === "reports" && <ReportsPage users={users} cycles={cycles} records={records} />}
-        {view === "templates" && <EmailTemplatesPage templates={emailTemplates} onSave={saveTemplate} onReset={resetTemplate} />}
+        {view === "templates" && <EmailTemplatesPage templates={emailTemplates} onSave={saveTemplate} onReset={resetTemplate} onToggle={toggleTemplate} />}
       </main>
     </div>
   );
