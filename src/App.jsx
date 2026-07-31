@@ -2094,17 +2094,12 @@ export default function App() {
     const now = Date.now();
     const rows = built.map((e, i) => ({ id: now + i + Math.random(), from: "OCPL PMS <no-reply@ocpl.com>", sentAt: new Date().toISOString(), event, ...e }));
     setEmails(prev => [...rows, ...prev]);
+    // Persist to the notification log. A Postgres trigger (send_email_on_insert) sends the
+    // real email via Resend for any row with deliver = true — so the on/off switches and the
+    // master switch are honored, and disabled notifications stay as Inbox-only audit records.
     supabase.from("emails").insert(rows.map(r => ({
-      from: r.from, to: r.to, to_name: r.toName, subject: r.subject, body: r.body, event: r.event, sent_at: r.sentAt,
+      from: r.from, to: r.to, to_name: r.toName, subject: r.subject, body: r.body, event: r.event, sent_at: r.sentAt, deliver: r.deliver,
     }))).then(({ error }) => { if (error) console.error("Failed to persist notification email", error); });
-    // Real email delivery via the send-email Edge Function — only for notifications whose
-    // template (and the master switch) is on. Disabled ones stay as Inbox-only audit records.
-    const toDeliver = rows.filter(r => r.deliver);
-    if (toDeliver.length) {
-      supabase.functions.invoke("send-email", {
-        body: { emails: toDeliver.map(r => ({ to: r.to, toName: r.toName, subject: r.subject, body: r.body })) },
-      }).catch((err) => console.error("Email delivery failed", err));
-    }
   };
 
   const upsertTemplate = async (key, fields, savedMsg) => {
