@@ -141,6 +141,14 @@ const EMAIL_TEMPLATE_CATALOG = [
     body: "Hi {managerName},\n\nThis is a reminder that {employeeName}'s ({employeeId}) {cycle} is awaiting your action. Please sign in and complete your review/approval." },
 ];
 const EMAIL_TEMPLATE_DEFAULTS = Object.fromEntries(EMAIL_TEMPLATE_CATALOG.map(t => [t.key, { subject: t.subject, body: t.body }]));
+const EMAIL_TEMPLATE_BY_KEY = Object.fromEntries(EMAIL_TEMPLATE_CATALOG.map(t => [t.key, t]));
+// Template groups shown on the Email Templates page, organized cycle-wise.
+const EMAIL_CATEGORIES = [
+  { name: "Goal Setting", keys: ["kra_submitted_manager", "kra_submitted_employee", "kra_approved_employee", "kra_changes_employee", "kra_draft_employee"] },
+  { name: "Mid-Year & Annual Review", keys: ["self_submitted_manager", "self_submitted_employee", "midyear_complete_employee", "review_returned_employee"] },
+  { name: "Annual Review — HR approval stage", keys: ["review_to_hr_hr", "review_to_hr_employee", "hr_approved_employee", "hr_approved_manager", "hr_rejected_manager"] },
+  { name: "General (all cycles)", keys: ["enrolled_employee", "reminder_employee", "reminder_manager", "cycle_reset_employee"] },
+];
 const fillTemplate = (str, vars) => (str || "").replace(/\{(\w+)\}/g, (_, k) => (vars[k] != null ? String(vars[k]) : "")).replace(/\n{3,}/g, "\n\n").trim();
 
 // ---- small UI ----
@@ -1897,16 +1905,26 @@ function EmailTemplatesPage({ templates, onSave, onReset, onToggle }) {
         currentSubject="" currentBody={sigOverride && sigOverride.body != null ? sigOverride.body : DEFAULT_SIGNATURE}
         isOverridden={!!(sigOverride && sigOverride.body != null)} canReset={!!sigOverride} canToggle={false}
         onSave={(s, b) => onSave("__signature", null, b)} onReset={() => onReset("__signature")} />
-      {EMAIL_TEMPLATE_CATALOG.map(t => {
-        const ov = templates[t.key];
-        const textOverridden = !!(ov && (ov.subject != null || ov.body != null));
-        const enabled = ov?.enabled !== false;
-        return <TemplateEditor key={t.key} label={t.event} to={t.to} hasSubject={true}
-          currentSubject={ov && ov.subject != null ? ov.subject : t.subject}
-          currentBody={ov && ov.body != null ? ov.body : t.body}
-          isOverridden={textOverridden} canReset={!!ov} canToggle={true} enabled={enabled}
-          onSave={(s, b) => onSave(t.key, s, b)} onReset={() => onReset(t.key)} onToggle={(v) => onToggle(t.key, v)} />;
-      })}
+      {EMAIL_CATEGORIES.map(cat => (
+        <div key={cat.name} className="space-y-2">
+          <div className="flex items-center gap-2 pt-1">
+            <span className="text-xs font-semibold uppercase tracking-wide text-indigo-500 whitespace-nowrap">{cat.name}</span>
+            <div className="h-px bg-slate-200 flex-1" />
+          </div>
+          {cat.keys.map(key => {
+            const t = EMAIL_TEMPLATE_BY_KEY[key];
+            if (!t) return null;
+            const ov = templates[key];
+            const textOverridden = !!(ov && (ov.subject != null || ov.body != null));
+            const enabled = ov?.enabled !== false;
+            return <TemplateEditor key={key} label={t.event} to={t.to} hasSubject={true}
+              currentSubject={ov && ov.subject != null ? ov.subject : t.subject}
+              currentBody={ov && ov.body != null ? ov.body : t.body}
+              isOverridden={textOverridden} canReset={!!ov} canToggle={true} enabled={enabled}
+              onSave={(s, b) => onSave(key, s, b)} onReset={() => onReset(key)} onToggle={(v) => onToggle(key, v)} />;
+          })}
+        </div>
+      ))}
     </div>
   );
 }
