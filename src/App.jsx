@@ -133,6 +133,12 @@ const EMAIL_TEMPLATE_CATALOG = [
   { key: "cycle_reset_employee", event: "Cycle reset by HR", to: "Employee",
     subject: "Your {cycle} progress has been reset",
     body: "Hi {employeeName},\n\nYour {cycle} cycle has been sent back to draft by HR. Your entries have been kept — please sign in, make the needed corrections, and resubmit.\n\n{note}" },
+  { key: "reminder_employee", event: "Reminder (pending on employee)", to: "Employee",
+    subject: "Reminder: complete your {cycle}",
+    body: "Hi {employeeName},\n\nThis is a reminder that your {cycle} task is still pending. Please sign in and complete it at the earliest." },
+  { key: "reminder_manager", event: "Reminder (pending on manager)", to: "Reporting Manager",
+    subject: "Reminder: {employeeName}'s {cycle} needs your action",
+    body: "Hi {managerName},\n\nThis is a reminder that {employeeName}'s ({employeeId}) {cycle} is awaiting your action. Please sign in and complete your review/approval." },
 ];
 const EMAIL_TEMPLATE_DEFAULTS = Object.fromEntries(EMAIL_TEMPLATE_CATALOG.map(t => [t.key, { subject: t.subject, body: t.body }]));
 const fillTemplate = (str, vars) => (str || "").replace(/\{(\w+)\}/g, (_, k) => (vars[k] != null ? String(vars[k]) : "")).replace(/\n{3,}/g, "\n\n").trim();
@@ -915,12 +921,13 @@ function ApprovalsPage({ users, cycles, getRecord, setRecord, onSaved, approvedK
   );
 }
 
-function CyclesAdmin({ users, cycles, setCycles, onSaved, onError, notify, onResetParticipant }) {
+function CyclesAdmin({ users, cycles, setCycles, onSaved, onError, notify, onResetParticipant, reminderTargets, onSendReminders }) {
   const [form, setForm] = useState({ name: "", year: new Date().getFullYear(), type: "Goal Setting", start: "", end: "" });
   const [manage, setManage] = useState(null);
   const [search, setSearch] = useState("");
   const [confirmReset, setConfirmReset] = useState(null);
   const [resetting, setResetting] = useState(false);
+  const [confirmRemind, setConfirmRemind] = useState(null); // cycle id
   const doReset = async (cycle) => {
     setResetting(true);
     await onResetParticipant(cycle, confirmReset.eid);
@@ -1020,10 +1027,29 @@ function CyclesAdmin({ users, cycles, setCycles, onSaved, onError, notify, onRes
                 <div className="flex items-center gap-2"><button onClick={() => toggleStatus(c.id)} className="text-xs font-medium px-2.5 py-1 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">{c.status === "Active" ? "Close" : "Reopen"}</button><button onClick={() => remove(c.id)} className="text-slate-300 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button></div>
               </div>
               {(c.start || c.end) && <div className="text-xs text-slate-400">{c.start || "—"} → {c.end || "—"}</div>}
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <span className="text-xs text-slate-500">{(c.participants || []).length} participant(s)</span>
-                <button onClick={() => setManage(manage === c.id ? null : c.id)} className="text-xs font-medium text-indigo-600 flex items-center gap-1"><Users className="w-3.5 h-3.5" /> Manage participants</button>
+                <div className="flex items-center gap-3">
+                  <button onClick={() => setConfirmRemind(confirmRemind === c.id ? null : c.id)} className="text-xs font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1"><Mail className="w-3.5 h-3.5" /> Send reminders</button>
+                  <button onClick={() => setManage(manage === c.id ? null : c.id)} className="text-xs font-medium text-indigo-600 flex items-center gap-1"><Users className="w-3.5 h-3.5" /> Manage participants</button>
+                </div>
               </div>
+              {confirmRemind === c.id && (() => {
+                const t = reminderTargets(c);
+                const emp = t.filter(x => x.target === "employee").length;
+                const mgr = t.filter(x => x.target === "manager").length;
+                return (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 flex items-center justify-between gap-2 flex-wrap">
+                    {t.length === 0
+                      ? <span className="text-xs text-amber-700">Everyone has completed this cycle — no reminders to send.</span>
+                      : <span className="text-xs text-amber-700">Email a reminder to <strong>{t.length}</strong> pending participant{t.length > 1 ? "s" : ""} ({emp} employee{emp !== 1 ? "s" : ""}, {mgr} manager{mgr !== 1 ? "s" : ""})?</span>}
+                    <div className="flex gap-1.5 shrink-0">
+                      <button onClick={() => setConfirmRemind(null)} className="text-xs font-medium text-slate-600 border border-slate-200 hover:bg-white px-2.5 py-1 rounded-lg">Cancel</button>
+                      {t.length > 0 && <button onClick={() => { onSendReminders(c); setConfirmRemind(null); }} className="text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 px-2.5 py-1 rounded-lg">Send reminders</button>}
+                    </div>
+                  </div>
+                );
+              })()}
               {manage === c.id && (
                 <div className="bg-slate-50 rounded-lg p-3 space-y-3">
                   <div>
@@ -2190,6 +2216,41 @@ export default function App() {
     onSaved(`Reset ${subject ? subject.name : employeeId}'s cycle.`);
   };
 
+  // Who still has a pending action in a cycle, and whom to nudge:
+  // "employee" if their part is unfinished, "manager" if it's awaiting their review/approval.
+  const reminderTargets = (cycle) => {
+    const out = [];
+    (cycle.participants || []).forEach(eid => {
+      const u = users.find(x => x.employeeId === eid);
+      if (!u) return;
+      const rec = records[rKey(cycle.id, eid)];
+      let target = null;
+      if (cycle.type === "Goal Setting") {
+        const status = rec ? rec.status : "Draft";
+        if (status === "Approved") target = null;
+        else if (status === "Submitted") target = "manager";
+        else target = "employee"; // Draft / Changes Requested
+      } else {
+        const stage = rec ? (rec.stage || "self") : "self";
+        if (stage === "self") target = "employee";
+        else if (stage === "manager") target = "manager";
+        else target = null; // hr stage (HR's own queue) or done
+      }
+      if (target) out.push({ user: u, target });
+    });
+    return out;
+  };
+  const sendReminders = (cycle) => {
+    const targets = reminderTargets(cycle);
+    let emp = 0, mgr = 0;
+    targets.forEach(({ user, target }) => {
+      if (target === "manager") { notify("reminder_manager", { cycle, subject: user }); mgr++; }
+      else { notify("reminder_employee", { cycle, subject: user }); emp++; }
+    });
+    if (emp + mgr === 0) onSaved("Everyone has completed this cycle — no reminders sent.");
+    else onSaved(`Sent ${emp + mgr} reminder(s): ${emp} to employees, ${mgr} to managers.`);
+  };
+
   const tpl = (key) => {
     const ov = emailTemplates[key] || {};
     const def = EMAIL_TEMPLATE_DEFAULTS[key] || { subject: "", body: "" };
@@ -2230,6 +2291,8 @@ export default function App() {
       hr_approved:      [["hr_approved_employee", subject.email, subject.name], ["hr_approved_manager", mgrTo, mgrName]],
       hr_rejected:      [["hr_rejected_manager", mgrTo, mgrName]],
       cycle_reset:      [["cycle_reset_employee", subject.email, subject.name]],
+      reminder_employee:[["reminder_employee", subject.email, subject.name]],
+      reminder_manager: [["reminder_manager", mgrTo, mgrName]],
     };
     if (event === "review_to_hr") {
       hrUsers.forEach(h => emit("review_to_hr_hr", h.email, h.name, { hrName: h.name }));
@@ -2315,7 +2378,7 @@ export default function App() {
         {view === "home" && <HomeDashboard me={me} cycles={cycles} go={setView} />}
         {view === "tasks" && <MyTasksPage me={me} cycles={cycles} getRecord={getRecord} setRecord={setRecord} onSaved={onSaved} approvedKRAsFor={approvedKRAsFor} notify={notify} />}
         {view === "team" && <TeamPage me={me} users={users} cycles={cycles} getRecord={getRecord} setRecord={setRecord} onSaved={onSaved} approvedKRAsFor={approvedKRAsFor} notify={notify} />}
-        {view === "cycles" && <CyclesAdmin users={users} cycles={cycles} setCycles={setCycles} onSaved={onSaved} onError={showError} notify={notify} onResetParticipant={resetParticipant} />}
+        {view === "cycles" && <CyclesAdmin users={users} cycles={cycles} setCycles={setCycles} onSaved={onSaved} onError={showError} notify={notify} onResetParticipant={resetParticipant} reminderTargets={reminderTargets} onSendReminders={sendReminders} />}
         {view === "approvals" && <ApprovalsPage users={users} cycles={cycles} getRecord={getRecord} setRecord={setRecord} onSaved={onSaved} approvedKRAsFor={approvedKRAsFor} notify={notify} />}
         {view === "users" && <UsersAdmin users={users} setUsers={setUsers} onSaved={onSaved} onError={showError} onEditUser={editUser} cycles={cycles} onUploadKRA={uploadKRA} />}
         {view === "completed" && <CompletedPage me={me} cycles={cycles} getRecord={getRecord} approvedKRAsFor={approvedKRAsFor} />}
