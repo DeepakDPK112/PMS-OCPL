@@ -81,6 +81,7 @@ const cycleLabel = (c) => (c.name && c.name.trim()) ? c.name : `${c.type} ${c.ye
 // anything not overridden falls back to these defaults. Placeholders: {employeeName},
 // {employeeId}, {cycle}, {managerName}, {hrName}, {note}.
 const PMS_LOGIN_URL = "https://pms-ocpl.vercel.app";
+const IDLE_LIMIT_MS = 60 * 60 * 1000; // auto sign-out after 1 hour of inactivity
 const DEFAULT_SIGNATURE = "Sign in to the Performance Management System: {loginUrl}\n\nThis is an automated message from the OCPL Performance Management System.";
 const EMAIL_PLACEHOLDERS = ["employeeName", "employeeId", "cycle", "managerName", "hrName", "note", "loginUrl"];
 const EMAIL_TEMPLATE_CATALOG = [
@@ -2016,7 +2017,13 @@ export default function App() {
     try { return new URLSearchParams(window.location.search).get("reset"); } catch (e) { return null; }
   });
   const [currentUserId, setCurrentUserId] = useState(() => {
-    try { return localStorage.getItem("pms:currentUserId") || null; } catch (e) { return null; }
+    try {
+      const uid = localStorage.getItem("pms:currentUserId");
+      if (!uid) return null;
+      const last = Number(localStorage.getItem("pms:lastActivity") || 0);
+      if (last && Date.now() - last > IDLE_LIMIT_MS) { localStorage.removeItem("pms:currentUserId"); localStorage.removeItem("pms:lastActivity"); return null; }
+      return uid;
+    } catch (e) { return null; }
   });
   const [view, setView] = useState("home");
   const [flash, setFlash] = useState("");
@@ -2058,6 +2065,31 @@ export default function App() {
       if (currentUserId) localStorage.setItem("pms:currentUserId", currentUserId);
       else localStorage.removeItem("pms:currentUserId");
     } catch (e) { /* ignore */ }
+  }, [currentUserId]);
+
+  // Auto sign-out after 1 hour of inactivity. Any activity resets the timer; also
+  // covers reloads (see currentUserId initializer) and idle-while-tab-hidden.
+  useEffect(() => {
+    if (!currentUserId) return;
+    let timer;
+    let lastWrite = 0;
+    const signOut = () => { try { localStorage.removeItem("pms:lastActivity"); } catch (e) {} setCurrentUserId(null); };
+    const bump = () => {
+      const now = Date.now();
+      if (now - lastWrite > 15000) { lastWrite = now; try { localStorage.setItem("pms:lastActivity", String(now)); } catch (e) {} }
+      clearTimeout(timer);
+      timer = setTimeout(signOut, IDLE_LIMIT_MS);
+    };
+    bump();
+    const events = ["mousemove", "mousedown", "keydown", "touchstart", "scroll", "click"];
+    events.forEach(ev => window.addEventListener(ev, bump, { passive: true }));
+    const onVis = () => {
+      if (document.visibilityState !== "visible") return;
+      const last = Number(localStorage.getItem("pms:lastActivity") || 0);
+      if (last && Date.now() - last > IDLE_LIMIT_MS) signOut(); else bump();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearTimeout(timer); events.forEach(ev => window.removeEventListener(ev, bump)); document.removeEventListener("visibilitychange", onVis); };
   }, [currentUserId]);
 
   const showError = (msg) => { setFlashError(msg); setTimeout(() => setFlashError(""), 3000); };
