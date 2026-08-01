@@ -170,6 +170,9 @@ function LoginScreen({ users, onLogin }) {
   const [showPwd, setShowPwd] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [mode, setMode] = useState("login"); // "login" | "forgot"
+  const [forgotSending, setForgotSending] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
 
   const handleLogin = async () => {
     setError("");
@@ -185,7 +188,17 @@ function LoginScreen({ users, onLogin }) {
     onLogin(data[0].employee_id);
   };
 
-  const handleKey = (e) => { if (e.key === "Enter") handleLogin(); };
+  const handleForgot = async () => {
+    setError("");
+    if (!empId.trim()) { setError("Please enter your Employee ID."); return; }
+    setForgotSending(true);
+    const { error: rpcError } = await supabase.rpc("request_password_reset", { p_employee_id: empId.trim() });
+    setForgotSending(false);
+    if (rpcError) { setError("Something went wrong. Please try again."); return; }
+    setForgotSent(true); // always show success (no account enumeration)
+  };
+
+  const handleKey = (e) => { if (e.key === "Enter") { mode === "forgot" ? handleForgot() : handleLogin(); } };
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -194,10 +207,33 @@ function LoginScreen({ users, onLogin }) {
           <img src={LOGO_STRIP} alt="Brand logos" className="h-12 sm:h-14 w-auto mx-auto object-contain" />
           <div>
             <h1 className="text-xl font-semibold text-slate-800">Performance Management System</h1>
-            <p className="text-sm text-slate-500 mt-1">Sign in with your Employee ID and password</p>
+            <p className="text-sm text-slate-500 mt-1">{mode === "forgot" ? "Reset your password" : "Sign in with your Employee ID and password"}</p>
           </div>
         </div>
 
+        {mode === "forgot" ? (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+            {forgotSent ? (
+              <>
+                <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto"><CheckCircle2 className="w-6 h-6" /></div>
+                <p className="text-sm text-slate-600 text-center">If that Employee ID exists, a password reset link has been sent to the registered email address. It expires in 1 hour.</p>
+                <p className="text-xs text-slate-400 text-center">Don't see it? Check your Spam/Promotions folder.</p>
+                <button onClick={() => { setMode("login"); setForgotSent(false); setError(""); }} className="w-full text-sm font-semibold py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white transition">Back to sign in</button>
+              </>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Employee ID</label>
+                  <input value={empId} onChange={e => { setEmpId(e.target.value); setError(""); }} onKeyDown={handleKey} placeholder="e.g. EMP-1024" className="w-full text-sm border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-300 transition" />
+                  <p className="text-xs text-slate-400">Enter your Employee ID and we'll email a reset link to your registered address.</p>
+                </div>
+                {error && <div className="bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 flex items-center gap-2 text-xs text-rose-700"><AlertCircle className="w-3.5 h-3.5 shrink-0" />{error}</div>}
+                <button onClick={handleForgot} disabled={forgotSending} className={`w-full text-sm font-semibold py-3 rounded-xl transition flex items-center justify-center gap-2 ${forgotSending ? "bg-indigo-400 text-white cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700 text-white"}`}>{forgotSending ? <><RefreshCw className="w-4 h-4 animate-spin" /> Sending…</> : "Send reset link"}</button>
+                <button onClick={() => { setMode("login"); setError(""); }} className="w-full text-xs font-medium text-slate-500 hover:text-slate-700">Back to sign in</button>
+              </>
+            )}
+          </div>
+        ) : (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Employee ID</label>
@@ -233,11 +269,92 @@ function LoginScreen({ users, onLogin }) {
           <button onClick={handleLogin} disabled={loading} className={`w-full text-sm font-semibold py-3 rounded-xl transition flex items-center justify-center gap-2 ${loading ? "bg-indigo-400 text-white cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700 text-white"}`}>
             {loading ? <><RefreshCw className="w-4 h-4 animate-spin" /> Signing in…</> : "Sign in"}
           </button>
+          <button onClick={() => { setMode("forgot"); setError(""); setPassword(""); }} className="w-full text-xs font-medium text-indigo-600 hover:text-indigo-700">Forgot password?</button>
         </div>
+        )}
 
-        <p className="text-center text-xs text-slate-400">Default password is <span className="font-medium text-slate-500">Password@123</span> — change it after first login.</p>
+        {mode === "login" && <p className="text-center text-xs text-slate-400">Default password is <span className="font-medium text-slate-500">Password@123</span> — change it after first login.</p>}
 
         {users.length === 0 && <Notice icon={AlertCircle}>No users configured. Contact your HR administrator.</Notice>}
+      </div>
+    </div>
+  );
+}
+
+// ---- Reset password (from emailed link) ----
+function ResetPasswordScreen({ token, onBackToLogin }) {
+  const [status, setStatus] = useState("checking"); // checking | valid | invalid | done
+  const [name, setName] = useState("");
+  const [newPwd, setNewPwd] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [showPwd, setShowPwd] = useState(false);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const { data, error: e } = await supabase.rpc("verify_reset_token", { p_token: token });
+      if (e || !data || data.length === 0) { setStatus("invalid"); return; }
+      setName(data[0].name || "");
+      setStatus("valid");
+    })();
+  }, [token]);
+
+  const submit = async () => {
+    setError("");
+    if (newPwd.length < 6) { setError("New password must be at least 6 characters."); return; }
+    if (newPwd !== confirm) { setError("Passwords do not match."); return; }
+    setSaving(true);
+    const { data: ok, error: e } = await supabase.rpc("reset_password_with_token", { p_token: token, p_new_password: newPwd });
+    setSaving(false);
+    if (e) { setError("Something went wrong. Please try again."); return; }
+    if (!ok) { setStatus("invalid"); return; }
+    setStatus("done");
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <div className="max-w-sm w-full space-y-6">
+        <div className="text-center space-y-3">
+          <img src={LOGO_STRIP} alt="Brand logos" className="h-12 sm:h-14 w-auto mx-auto object-contain" />
+          <h1 className="text-xl font-semibold text-slate-800">Reset your password</h1>
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+          {status === "checking" && <p className="text-sm text-slate-500 text-center flex items-center justify-center gap-2"><RefreshCw className="w-4 h-4 animate-spin" /> Checking your link…</p>}
+          {status === "invalid" && (
+            <>
+              <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto"><AlertCircle className="w-6 h-6" /></div>
+              <p className="text-sm text-slate-600 text-center">This reset link is invalid or has expired. Please request a new one.</p>
+              <button onClick={onBackToLogin} className="w-full text-sm font-semibold py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white transition">Back to sign in</button>
+            </>
+          )}
+          {status === "done" && (
+            <>
+              <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto"><CheckCircle2 className="w-6 h-6" /></div>
+              <p className="text-sm text-slate-600 text-center">Your password has been updated. You can now sign in with your new password.</p>
+              <button onClick={onBackToLogin} className="w-full text-sm font-semibold py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white transition">Go to sign in</button>
+            </>
+          )}
+          {status === "valid" && (
+            <>
+              {name && <p className="text-sm text-slate-500 text-center">Setting a new password for <span className="font-medium text-slate-700">{name}</span></p>}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide">New password</label>
+                <div className="relative">
+                  <input type={showPwd ? "text" : "password"} value={newPwd} onChange={e => { setNewPwd(e.target.value); setError(""); }} placeholder="At least 6 characters" className="w-full text-sm border border-slate-200 rounded-xl px-4 py-3 pr-11 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-300 transition" />
+                  <button onClick={() => setShowPwd(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1">{showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Confirm password</label>
+                <input type={showPwd ? "text" : "password"} value={confirm} onChange={e => { setConfirm(e.target.value); setError(""); }} onKeyDown={e => { if (e.key === "Enter") submit(); }} placeholder="Re-enter new password" className="w-full text-sm border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-300 transition" />
+              </div>
+              {error && <div className="bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 flex items-center gap-2 text-xs text-rose-700"><AlertCircle className="w-3.5 h-3.5 shrink-0" />{error}</div>}
+              <button onClick={submit} disabled={saving} className={`w-full text-sm font-semibold py-3 rounded-xl transition flex items-center justify-center gap-2 ${saving ? "bg-indigo-400 text-white cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700 text-white"}`}>{saving ? <><RefreshCw className="w-4 h-4 animate-spin" /> Updating…</> : "Set new password"}</button>
+              <button onClick={onBackToLogin} className="w-full text-xs font-medium text-slate-500 hover:text-slate-700">Back to sign in</button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1895,6 +2012,9 @@ export default function App() {
   const [records, setRecords] = useState({});
   const [emails, setEmails] = useState([]);
   const [emailTemplates, setEmailTemplates] = useState({});
+  const [resetToken, setResetToken] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("reset"); } catch (e) { return null; }
+  });
   const [currentUserId, setCurrentUserId] = useState(() => {
     try { return localStorage.getItem("pms:currentUserId") || null; } catch (e) { return null; }
   });
@@ -2123,6 +2243,7 @@ export default function App() {
     if (error) showError("Couldn't reset the template — please retry."); else onSaved("Template reset to default.");
   };
 
+  if (resetToken) return <ResetPasswordScreen token={resetToken} onBackToLogin={() => { try { window.history.replaceState({}, "", window.location.pathname); } catch (e) {} setResetToken(null); }} />;
   if (!loaded) return <div className="min-h-screen bg-slate-50" />;
   if (loadError) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
