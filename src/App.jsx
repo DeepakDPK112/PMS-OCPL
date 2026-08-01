@@ -921,7 +921,7 @@ function ApprovalsPage({ users, cycles, getRecord, setRecord, onSaved, approvedK
   );
 }
 
-function CyclesAdmin({ users, cycles, setCycles, onSaved, onError, notify, onResetParticipant, reminderTargets, onSendReminders }) {
+function CyclesAdmin({ users, cycles, setCycles, onSaved, onError, notify, onResetParticipant, reminderTargets, onSendReminders, onRemindParticipant }) {
   const [form, setForm] = useState({ name: "", year: new Date().getFullYear(), type: "Goal Setting", start: "", end: "" });
   const [manage, setManage] = useState(null);
   const [search, setSearch] = useState("");
@@ -1054,13 +1054,16 @@ function CyclesAdmin({ users, cycles, setCycles, onSaved, onError, notify, onRes
                 <div className="bg-slate-50 rounded-lg p-3 space-y-3">
                   <div>
                     <div className="text-xs font-medium text-slate-500 mb-1.5">Current participants</div>
-                    {(c.participants || []).length === 0 ? <p className="text-xs text-slate-400">None added yet.</p> : (
+                    {(c.participants || []).length === 0 ? <p className="text-xs text-slate-400">None added yet.</p> : (() => {
+                      const pendingSet = new Set(reminderTargets(c).map(x => x.user.employeeId));
+                      return (
                       <div className="flex flex-wrap gap-1.5">
                         {(c.participants || []).map(eid => { const u = users.find(x => x.employeeId === eid); return (
-                          <span key={eid} className="inline-flex items-center gap-1 text-xs bg-white border border-slate-200 rounded-full px-2.5 py-1 text-slate-700">{u ? u.name : eid} <span className="text-slate-400">· {eid}</span><button onClick={() => setConfirmReset({ cid: c.id, eid })} title="Reset this employee's cycle" className="text-slate-300 hover:text-amber-600 ml-0.5"><RefreshCw className="w-3 h-3" /></button><button onClick={() => toggleParticipant(c.id, eid)} aria-label="Remove participant" className="text-slate-300 hover:text-rose-500 ml-0.5">×</button></span>
+                          <span key={eid} className="inline-flex items-center gap-1 text-xs bg-white border border-slate-200 rounded-full px-2.5 py-1 text-slate-700">{u ? u.name : eid} <span className="text-slate-400">· {eid}</span>{pendingSet.has(eid) && <button onClick={() => onRemindParticipant(c, eid)} title="Send a reminder to this person" className="text-slate-300 hover:text-amber-600 ml-0.5"><Mail className="w-3 h-3" /></button>}<button onClick={() => setConfirmReset({ cid: c.id, eid })} title="Reset this employee's cycle" className="text-slate-300 hover:text-amber-600 ml-0.5"><RefreshCw className="w-3 h-3" /></button><button onClick={() => toggleParticipant(c.id, eid)} aria-label="Remove participant" className="text-slate-300 hover:text-rose-500 ml-0.5">×</button></span>
                         ); })}
                       </div>
-                    )}
+                      );
+                    })()}
                     {confirmReset && confirmReset.cid === c.id && (() => {
                       const u = users.find(x => x.employeeId === confirmReset.eid);
                       return (
@@ -2216,26 +2219,28 @@ export default function App() {
     onSaved(`Reset ${subject ? subject.name : employeeId}'s cycle.`);
   };
 
-  // Who still has a pending action in a cycle, and whom to nudge:
-  // "employee" if their part is unfinished, "manager" if it's awaiting their review/approval.
+  // Who still has a pending action for one participant, and whom to nudge:
+  // "employee" if their part is unfinished, "manager" if it's awaiting their review/approval,
+  // null if completed (or an Annual review sitting with HR).
+  const participantTarget = (cycle, eid) => {
+    const rec = records[rKey(cycle.id, eid)];
+    if (cycle.type === "Goal Setting") {
+      const status = rec ? rec.status : "Draft";
+      if (status === "Approved") return null;
+      if (status === "Submitted") return "manager";
+      return "employee"; // Draft / Changes Requested
+    }
+    const stage = rec ? (rec.stage || "self") : "self";
+    if (stage === "self") return "employee";
+    if (stage === "manager") return "manager";
+    return null; // hr stage or done
+  };
   const reminderTargets = (cycle) => {
     const out = [];
     (cycle.participants || []).forEach(eid => {
       const u = users.find(x => x.employeeId === eid);
       if (!u) return;
-      const rec = records[rKey(cycle.id, eid)];
-      let target = null;
-      if (cycle.type === "Goal Setting") {
-        const status = rec ? rec.status : "Draft";
-        if (status === "Approved") target = null;
-        else if (status === "Submitted") target = "manager";
-        else target = "employee"; // Draft / Changes Requested
-      } else {
-        const stage = rec ? (rec.stage || "self") : "self";
-        if (stage === "self") target = "employee";
-        else if (stage === "manager") target = "manager";
-        else target = null; // hr stage (HR's own queue) or done
-      }
+      const target = participantTarget(cycle, eid);
       if (target) out.push({ user: u, target });
     });
     return out;
@@ -2249,6 +2254,14 @@ export default function App() {
     });
     if (emp + mgr === 0) onSaved("Everyone has completed this cycle — no reminders sent.");
     else onSaved(`Sent ${emp + mgr} reminder(s): ${emp} to employees, ${mgr} to managers.`);
+  };
+  const remindParticipant = (cycle, eid) => {
+    const u = users.find(x => x.employeeId === eid);
+    if (!u) return;
+    const target = participantTarget(cycle, eid);
+    if (!target) { onSaved(`${u.name} has already completed this cycle.`); return; }
+    notify(target === "manager" ? "reminder_manager" : "reminder_employee", { cycle, subject: u });
+    onSaved(`Reminder sent for ${u.name} (to ${target === "manager" ? "their manager" : "them"}).`);
   };
 
   const tpl = (key) => {
@@ -2378,7 +2391,7 @@ export default function App() {
         {view === "home" && <HomeDashboard me={me} cycles={cycles} go={setView} />}
         {view === "tasks" && <MyTasksPage me={me} cycles={cycles} getRecord={getRecord} setRecord={setRecord} onSaved={onSaved} approvedKRAsFor={approvedKRAsFor} notify={notify} />}
         {view === "team" && <TeamPage me={me} users={users} cycles={cycles} getRecord={getRecord} setRecord={setRecord} onSaved={onSaved} approvedKRAsFor={approvedKRAsFor} notify={notify} />}
-        {view === "cycles" && <CyclesAdmin users={users} cycles={cycles} setCycles={setCycles} onSaved={onSaved} onError={showError} notify={notify} onResetParticipant={resetParticipant} reminderTargets={reminderTargets} onSendReminders={sendReminders} />}
+        {view === "cycles" && <CyclesAdmin users={users} cycles={cycles} setCycles={setCycles} onSaved={onSaved} onError={showError} notify={notify} onResetParticipant={resetParticipant} reminderTargets={reminderTargets} onSendReminders={sendReminders} onRemindParticipant={remindParticipant} />}
         {view === "approvals" && <ApprovalsPage users={users} cycles={cycles} getRecord={getRecord} setRecord={setRecord} onSaved={onSaved} approvedKRAsFor={approvedKRAsFor} notify={notify} />}
         {view === "users" && <UsersAdmin users={users} setUsers={setUsers} onSaved={onSaved} onError={showError} onEditUser={editUser} cycles={cycles} onUploadKRA={uploadKRA} />}
         {view === "completed" && <CompletedPage me={me} cycles={cycles} getRecord={getRecord} approvedKRAsFor={approvedKRAsFor} />}
