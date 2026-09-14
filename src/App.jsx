@@ -1747,6 +1747,9 @@ function KRAViewModal({ subject, cycle, record, kras, onClose, onDownload }) {
 function ReportsPage({ users, cycles, records }) {
   const [filterCycleId, setFilterCycleId] = useState("all");
   const [filterType, setFilterType] = useState("all");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 30;
   const [viewing, setViewing] = useState(null);
 
   const getRec = (cid, eid) => records[`${cid}::${eid}`] || null;
@@ -1923,14 +1926,27 @@ function ReportsPage({ users, cycles, records }) {
       allItems.push({ cycle: c, user: u, rec, st });
     });
   });
-  const visibleItems = filterCycleId === "all" ? allItems : allItems.filter(x => String(x.cycle.id) === filterCycleId);
-  const total = visibleItems.length;
-  const completed  = visibleItems.filter(x => x.st.tone === "emerald").length;
-  const inProgress = visibleItems.filter(x => x.st.tone === "sky" || x.st.tone === "amber").length;
+  const cycleFilteredItems = filterCycleId === "all" ? allItems : allItems.filter(x => String(x.cycle.id) === filterCycleId);
+  const searchedItems = (() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return cycleFilteredItems;
+    return cycleFilteredItems.filter(({ user: u }) =>
+      (u.name || "").toLowerCase().includes(q) ||
+      (u.employeeId || "").toLowerCase().includes(q) ||
+      (u.department || "").toLowerCase().includes(q) ||
+      (u.reportingManager || "").toLowerCase().includes(q)
+    );
+  })();
+  const total = searchedItems.length;
+  const completed  = searchedItems.filter(x => x.st.tone === "emerald").length;
+  const inProgress = searchedItems.filter(x => x.st.tone === "sky" || x.st.tone === "amber").length;
   const notStarted = total - completed - inProgress;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pagedItems = searchedItems.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   const downloadCompletion = () => {
-    const rows = visibleItems.map(({ cycle: c, user: u, st }) => ({
+    const rows = searchedItems.map(({ cycle: c, user: u, st }) => ({
       "Cycle Name": c.name || "", "Cycle Type": c.type, "Year": c.year, "Cycle Status": c.status,
       "Employee Name": u.name, "Employee ID": u.employeeId,
       "Department": u.department, "Designation": u.designation,
@@ -1982,12 +1998,18 @@ function ReportsPage({ users, cycles, records }) {
           <button onClick={downloadCompletion} className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg transition"><Download className="w-3.5 h-3.5" /> Export (.xlsx)</button>
         </div>
 
+        <div className="relative">
+          <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} placeholder="Search by name, Employee ID, department, or manager…" className="w-full text-sm border border-slate-200 rounded-lg pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          {search && <button onClick={() => setSearch("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-lg leading-none font-medium">×</button>}
+        </div>
+
         <div className="flex gap-2 flex-wrap">
-          <select value={filterCycleId} onChange={e => setFilterCycleId(e.target.value)} className="flex-1 min-w-0 text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200">
+          <select value={filterCycleId} onChange={e => { setFilterCycleId(e.target.value); setPage(1); }} className="flex-1 min-w-0 text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200">
             <option value="all">All cycles</option>
             {cycles.map(c => <option key={c.id} value={String(c.id)}>{cycleLabel(c)} ({c.status})</option>)}
           </select>
-          <select value={filterType} onChange={e => setFilterType(e.target.value)} className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200">
+          <select value={filterType} onChange={e => { setFilterType(e.target.value); setPage(1); }} className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200">
             <option value="all">All types</option>
             {CYCLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
@@ -2013,8 +2035,8 @@ function ReportsPage({ users, cycles, records }) {
           </div>
         )}
 
-        {visibleItems.length === 0
-          ? <Notice icon={PieChart}>No participants enrolled{filterCycleId !== "all" ? " in this cycle" : ""}. Enrol employees via Cycle Management.</Notice>
+        {searchedItems.length === 0
+          ? <Notice icon={PieChart}>{search.trim() ? `No results match "${search.trim()}".` : `No participants enrolled${filterCycleId !== "all" ? " in this cycle" : ""}. Enrol employees via Cycle Management.`}</Notice>
           : (
             <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-xs">
@@ -2031,7 +2053,7 @@ function ReportsPage({ users, cycles, records }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleItems.map(({ cycle: c, user: u, rec, st }, i) => (
+                  {pagedItems.map(({ cycle: c, user: u, rec, st }, i) => (
                     <tr key={i} className={`border-t border-slate-100 ${i % 2 === 0 ? "" : "bg-slate-50/50"}`}>
                       <td className="px-3 py-2.5">
                         <div className="font-medium text-slate-800">{u.name}</div>
@@ -2064,6 +2086,17 @@ function ReportsPage({ users, cycles, records }) {
             </div>
           )
         }
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between gap-2 flex-wrap pt-1">
+            <span className="text-xs text-slate-500">Showing {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, total)} of {total}</span>
+            <div className="flex items-center gap-1.5">
+              <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className={`text-xs font-medium px-3 py-1.5 rounded-lg border ${currentPage === 1 ? "border-slate-100 text-slate-300 cursor-not-allowed" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>Previous</button>
+              <span className="text-xs text-slate-500 px-1">Page {currentPage} of {totalPages}</span>
+              <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className={`text-xs font-medium px-3 py-1.5 rounded-lg border ${currentPage === totalPages ? "border-slate-100 text-slate-300 cursor-not-allowed" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>Next</button>
+            </div>
+          </div>
+        )}
       </div>
 
       {viewing && (
