@@ -1645,7 +1645,7 @@ function UsersAdmin({ users, setUsers, onSaved, onError, onEditUser, cycles, onU
   );
 }
 
-function KRAViewModal({ subject, cycle, record, kras, onClose }) {
+function KRAViewModal({ subject, cycle, record, kras, onClose, onDownload }) {
   const isGoal = cycle.type === "Goal Setting";
   const isPtc = cycle.type === "Probation to Confirmation";
   const rKras = isGoal ? (record?.kras || []) : (kras || []);
@@ -1665,7 +1665,10 @@ function KRAViewModal({ subject, cycle, record, kras, onClose }) {
             <h3 className="font-semibold text-slate-800">{subject.name} — {cycleLabel(cycle)}</h3>
             <p className="text-xs text-slate-500">{subject.employeeId} · {subject.designation} · {subject.department}</p>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none shrink-0">×</button>
+          <div className="flex items-center gap-2 shrink-0">
+            {onDownload && <button onClick={onDownload} title="Download as Excel" className="text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1 rounded-lg flex items-center gap-1"><Download className="w-3.5 h-3.5" /> Excel</button>}
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+          </div>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap text-xs">
@@ -1752,6 +1755,72 @@ function ReportsPage({ users, cycles, records }) {
     if (!gc) return null;
     const rec = getRec(gc.id, eid);
     return rec && rec.status === "Approved" ? rec.kras : null;
+  };
+
+  // ── Single-employee export (any cycle type) — for emailing to that person/manager ──
+  const downloadIndividualExcel = (u, c, rec, kras) => {
+    const base = {
+      "Employee Name": u.name, "Employee ID": u.employeeId,
+      "Department": u.department, "Designation": u.designation,
+      "Reporting Manager": u.reportingManager,
+      "Cycle": cycleLabel(c), "Cycle Type": c.type, "Year": c.year,
+    };
+    const rows = [];
+    if (c.type === "Goal Setting") {
+      const kraList = rec?.kras || [];
+      if (!kraList.length) { alert("No KRA data to export for this employee."); return; }
+      const status = rec?.status || "Draft";
+      kraList.forEach((k, ki) => k.kpis.forEach(p => rows.push({
+        ...base, "Status": status,
+        "Submitted": fmtDT(rec?.submittedAt), "Approved": fmtDT(rec?.approvedAt),
+        "KRA #": ki + 1, "Key Result Area": k.kra, "KPI": p.kpi, "Measurement": p.measurement,
+        "Target": p.target, "Weightage (%)": Number(p.weightage) || 0,
+      })));
+    } else if (c.type === "Probation to Confirmation") {
+      const ptc = rec?.ptc || {};
+      const stage = rec?.stage || "self";
+      PTC_CRITERIA.forEach(crit => {
+        const r = ptc[crit.id] || {};
+        rows.push({
+          ...base, "Stage": stage, "Submitted": fmtDT(rec?.selfSubmittedAt), "Approved": fmtDT(rec?.managerApprovedAt),
+          "Criteria": crit.title, "Self Rating (1-5)": r.selfRating || "", "Manager Rating (1-5)": r.mgrRating || "",
+          "Employee Remarks": "", "Manager Feedback": "",
+        });
+      });
+      rows.push({
+        ...base, "Stage": stage, "Submitted": fmtDT(rec?.selfSubmittedAt), "Approved": fmtDT(rec?.managerApprovedAt),
+        "Criteria": "OVERALL", "Self Rating (1-5)": PTC_CRITERIA.reduce((a, c2) => a + (Number(ptc[c2.id]?.selfRating) || 0), 0),
+        "Manager Rating (1-5)": PTC_CRITERIA.reduce((a, c2) => a + (Number(ptc[c2.id]?.mgrRating) || 0), 0),
+        "Employee Remarks": ptc.__selfComment || "", "Manager Feedback": ptc.__mgrComment || "",
+      });
+    } else {
+      const review = rec?.review || {};
+      const stage = rec?.stage || "self";
+      const kraList = kras || [];
+      if (!kraList.length) { alert("No approved KRA sheet found for this employee/year — ratings can't be exported until one is approved."); return; }
+      kraList.forEach(k => k.kpis.forEach(p => {
+        const r = review[p.id] || {};
+        rows.push({
+          ...base, "Stage": stage, "Submitted": fmtDT(rec?.selfSubmittedAt), "Approved": fmtDT(rec?.managerApprovedAt),
+          "Key Result Area": k.kra, "KPI": p.kpi, "Weightage (%)": Number(p.weightage) || 0,
+          "Self Rating": r.selfRating || "", "Self Comment": r.selfComment || "",
+          "Manager Rating": r.mgrRating || "", "Manager Comment": r.mgrComment || "",
+        });
+      }));
+      const overall = review.__overall || {};
+      rows.push({
+        ...base, "Stage": stage, "Submitted": fmtDT(rec?.selfSubmittedAt), "Approved": fmtDT(rec?.managerApprovedAt),
+        "Key Result Area": "OVERALL", "KPI": "", "Weightage (%)": "",
+        "Self Rating": "", "Self Comment": overall.selfComment || "",
+        "Manager Rating": "", "Manager Comment": overall.mgrComment || "",
+      });
+    }
+    if (!rows.length) { alert("No data to export."); return; }
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Report");
+    const safeName = `${u.employeeId}_${cycleLabel(c)}`.replace(/[^\w\- ]/g, "").replace(/\s+/g, "_").slice(0, 60);
+    XLSX.writeFile(wb, `${safeName}.xlsx`);
   };
 
   // ── KRA Report ──────────────────────────────────────────────────────
@@ -1983,7 +2052,10 @@ function ReportsPage({ users, cycles, records }) {
                       <td className="px-3 py-2.5 text-slate-500 hidden md:table-cell">{fmtDT(c.type === "Goal Setting" ? rec?.submittedAt : rec?.selfSubmittedAt)}</td>
                       <td className="px-3 py-2.5 text-slate-500 hidden md:table-cell">{fmtDT(c.type === "Goal Setting" ? rec?.approvedAt : rec?.managerApprovedAt)}</td>
                       <td className="px-3 py-2.5">
-                        <button onClick={() => setViewing({ cycle: c, user: u, rec })} className="text-xs font-medium text-indigo-600 hover:text-indigo-700 flex items-center gap-1 whitespace-nowrap"><Eye className="w-3.5 h-3.5" /> View</button>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => setViewing({ cycle: c, user: u, rec })} className="text-xs font-medium text-indigo-600 hover:text-indigo-700 flex items-center gap-1 whitespace-nowrap"><Eye className="w-3.5 h-3.5" /> View</button>
+                          <button onClick={() => downloadIndividualExcel(u, c, rec, c.type !== "Goal Setting" && c.type !== "Probation to Confirmation" ? getApprovedKras(u.employeeId, c.year) : null)} title="Download this employee's report as Excel" className="text-xs font-medium text-emerald-700 hover:text-emerald-800 flex items-center gap-1 whitespace-nowrap"><Download className="w-3.5 h-3.5" /> Excel</button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -2001,6 +2073,7 @@ function ReportsPage({ users, cycles, records }) {
           record={viewing.rec}
           kras={viewing.cycle.type !== "Goal Setting" ? getApprovedKras(viewing.user.employeeId, viewing.cycle.year) : null}
           onClose={() => setViewing(null)}
+          onDownload={() => downloadIndividualExcel(viewing.user, viewing.cycle, viewing.rec, viewing.cycle.type !== "Goal Setting" && viewing.cycle.type !== "Probation to Confirmation" ? getApprovedKras(viewing.user.employeeId, viewing.cycle.year) : null)}
         />
       )}
     </div>
