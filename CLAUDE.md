@@ -46,7 +46,8 @@ PMS-OCPL/
 
 ### Constants (top of file)
 - `RATING_SCALE` — 5-point scale: Exceptional → Needs Improvement
-- `CYCLE_TYPES` — Goal Setting | Mid-Year Review | Annual Performance Review
+- `CYCLE_TYPES` — Goal Setting | Mid-Year Review | Annual Performance Review | Probation to Confirmation
+- `PTC_CRITERIA` / `PTC_SCALE` — fixed 7-criterion questionnaire and 1–5 scale (Poor→Excellent) for Probation to Confirmation cycles
 - `USER_ROLE` — employee | manager | hr
 - `KRA_TEMPLATE` — default KRA/KPI structure loaded for new Goal Setting records
 - `initialUsers` — 4 demo users (Priya Nair, Arjun Mehta, L. Sharma, R. Das)
@@ -112,6 +113,7 @@ App
 **Goal Setting:** Employee Draft → Submitted → Manager (Approve | Request Changes) → Approved
 **Mid-Year Review:** Employee self → Manager review → Done (no HR step)
 **Annual Review:** Employee self → Manager review → HR approval → Done
+**Probation to Confirmation:** Employee self-scores the 7 fixed criteria (1–5) + remarks → Manager scores + one feedback comment → Done (no HR). Record shape: `{ ptc: { [criterionId]: { selfRating, mgrRating }, __selfComment, __mgrComment }, stage: "self|manager|done" }`. Rendered by `PtcActivity`.
 
 ### Notification system
 `notify(event, { cycle, subject, note })` is called at every workflow action.  

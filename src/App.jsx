@@ -18,12 +18,31 @@ const SHEET_STATUS = {
   Approved: "bg-emerald-100 text-emerald-700 border-emerald-200",
   "Changes Requested": "bg-amber-100 text-amber-700 border-amber-200",
 };
-const CYCLE_TYPES = ["Goal Setting", "Mid-Year Review", "Annual Performance Review"];
+const CYCLE_TYPES = ["Goal Setting", "Mid-Year Review", "Annual Performance Review", "Probation to Confirmation"];
 const CYCLE_TONE = {
   "Goal Setting": "bg-indigo-100 text-indigo-700 border-indigo-200",
   "Mid-Year Review": "bg-amber-100 text-amber-700 border-amber-200",
   "Annual Performance Review": "bg-violet-100 text-violet-700 border-violet-200",
+  "Probation to Confirmation": "bg-teal-100 text-teal-700 border-teal-200",
 };
+// Probation to Confirmation (PTC) — fixed questionnaire rated 1-5 by self then manager.
+const PTC_SCALE = [
+  { level: 5, label: "Excellent", color: "bg-emerald-100 text-emerald-700 border-emerald-200", dot: "bg-emerald-500" },
+  { level: 4, label: "Good", color: "bg-teal-100 text-teal-700 border-teal-200", dot: "bg-teal-500" },
+  { level: 3, label: "Satisfactory", color: "bg-indigo-100 text-indigo-700 border-indigo-200", dot: "bg-indigo-500" },
+  { level: 2, label: "Needs Improvement", color: "bg-amber-100 text-amber-700 border-amber-200", dot: "bg-amber-500" },
+  { level: 1, label: "Poor", color: "bg-rose-100 text-rose-700 border-rose-200", dot: "bg-rose-500" },
+];
+const ptcBand = (level) => PTC_SCALE.find(x => x.level === level);
+const PTC_CRITERIA = [
+  { id: 1, title: "Quality of Work", desc: "Accuracy and attention to detail, consistency in meeting standards" },
+  { id: 2, title: "Discipline & Attendance", desc: "Timeliness and adherence, absenteeism & responsiveness" },
+  { id: 3, title: "Teamwork & Collaboration", desc: "Willingness to assist colleagues, cooperation and coordination" },
+  { id: 4, title: "Interpersonal Skills", desc: "Communication & professionalism, conflict resolution ability" },
+  { id: 5, title: "Order Execution & Task Completion", desc: "Following instructions & precision, completing assigned tasks on time, accountability & responsibility" },
+  { id: 6, title: "Adaptability & Learning Ability", desc: "Willingness to learn & improve, adjusts to changes effectively" },
+  { id: 7, title: "Initiative & Problem-Solving", desc: "Takes ownership of tasks, proposes effective solutions" },
+];
 const USER_ROLE = {
   employee: { label: "Employee", color: "bg-slate-100 text-slate-600 border-slate-200" },
   manager: { label: "Manager", color: "bg-sky-100 text-sky-700 border-sky-200" },
@@ -54,7 +73,7 @@ const deep = (o) => JSON.parse(JSON.stringify(o));
 const totalWeight = (kras) => kras.reduce((a, k) => a + k.kpis.reduce((b, p) => b + Number(p.weightage || 0), 0), 0);
 const cgpaToBand = (c) => c >= 4.5 ? 5 : c >= 3.5 ? 4 : c >= 2.5 ? 3 : c >= 1.5 ? 2 : 1;
 const rKey = (cid, eid) => `${cid}::${eid}`;
-const defaultRecord = (type) => type === "Goal Setting" ? { kras: deep(KRA_TEMPLATE), status: "Draft", note: "" } : { review: {}, stage: "self" };
+const defaultRecord = (type) => type === "Goal Setting" ? { kras: deep(KRA_TEMPLATE), status: "Draft", note: "" } : type === "Probation to Confirmation" ? { ptc: {}, stage: "self" } : { review: {}, stage: "self" };
 
 const mapUserRow = (r) => ({
   id: r.id, name: r.name, employeeId: r.employee_id, email: r.email,
@@ -139,6 +158,15 @@ const EMAIL_TEMPLATE_CATALOG = [
   { key: "reminder_manager", event: "Reminder (pending on manager)", to: "Reporting Manager",
     subject: "Reminder: {employeeName}'s {cycle} needs your action",
     body: "Hi {managerName},\n\nThis is a reminder that {employeeName}'s ({employeeId}) {cycle} is awaiting your action. Please sign in and complete your review/approval." },
+  { key: "ptc_self_submitted_manager", event: "PTC self-assessment submitted", to: "Reporting Manager",
+    subject: "Probation assessment submitted — {employeeName}",
+    body: "Hi {managerName},\n\n{employeeName} ({employeeId}) has submitted their probation self-assessment for {cycle} and it is ready for your rating." },
+  { key: "ptc_self_submitted_employee", event: "PTC self-assessment submitted", to: "Employee",
+    subject: "Probation self-assessment submitted — {cycle}",
+    body: "Hi {employeeName},\n\nYour probation self-assessment for {cycle} has been submitted to {managerName}." },
+  { key: "ptc_complete_employee", event: "PTC assessment complete", to: "Employee",
+    subject: "Your probation assessment is complete — {cycle}",
+    body: "Hi {employeeName},\n\nYour {cycle} probation assessment has been completed by {managerName}." },
 ];
 const EMAIL_TEMPLATE_DEFAULTS = Object.fromEntries(EMAIL_TEMPLATE_CATALOG.map(t => [t.key, { subject: t.subject, body: t.body }]));
 const EMAIL_TEMPLATE_BY_KEY = Object.fromEntries(EMAIL_TEMPLATE_CATALOG.map(t => [t.key, t]));
@@ -147,6 +175,7 @@ const EMAIL_CATEGORIES = [
   { name: "Goal Setting", keys: ["kra_submitted_manager", "kra_submitted_employee", "kra_approved_employee", "kra_changes_employee", "kra_draft_employee"] },
   { name: "Mid-Year & Annual Review", keys: ["self_submitted_manager", "self_submitted_employee", "midyear_complete_employee", "review_returned_employee"] },
   { name: "Annual Review — HR approval stage", keys: ["review_to_hr_hr", "review_to_hr_employee", "hr_approved_employee", "hr_approved_manager", "hr_rejected_manager"] },
+  { name: "Probation to Confirmation", keys: ["ptc_self_submitted_manager", "ptc_self_submitted_employee", "ptc_complete_employee"] },
   { name: "General (all cycles)", keys: ["enrolled_employee", "reminder_employee", "reminder_manager", "cycle_reset_employee"] },
 ];
 const fillTemplate = (str, vars) => (str || "").replace(/\{(\w+)\}/g, (_, k) => (vars[k] != null ? String(vars[k]) : "")).replace(/\n{3,}/g, "\n\n").trim();
@@ -159,8 +188,8 @@ function Notice({ icon: Icon, tone = "slate", children }) {
   const it = { slate: "text-slate-400", amber: "text-amber-600", emerald: "text-emerald-600", rose: "text-rose-600" };
   return <div className={`rounded-xl border p-4 flex gap-2 text-sm ${t[tone]}`}><Icon className={`w-4 h-4 shrink-0 mt-0.5 ${it[tone]}`} />{children}</div>;
 }
-function RatingPicker({ value, onChange }) {
-  return <div className="flex flex-wrap gap-1.5">{RATING_SCALE.slice().reverse().map(r => (
+function RatingPicker({ value, onChange, scale = RATING_SCALE }) {
+  return <div className="flex flex-wrap gap-1.5">{scale.slice().reverse().map(r => (
     <button key={r.level} onClick={() => onChange(r.level)} className={`text-xs font-medium px-2.5 py-1.5 rounded-lg border transition ${value === r.level ? r.color : "bg-white border-slate-200 text-slate-500 hover:border-indigo-300"}`}>{r.level} · {r.label}</button>
   ))}</div>;
 }
@@ -667,10 +696,90 @@ function ReviewActivity({ subject, record, kras, onChange, onSaved, actorRole, h
   );
 }
 
+// ---- Probation to Confirmation activity ----
+function PtcActivity({ subject, record, onChange, onSaved, actorRole, notify }) {
+  const ptc = record.ptc || {};
+  const stage = record.stage || "self";
+  const setRating = (id, who, v) => onChange({ ...record, ptc: { ...ptc, [id]: { ...(ptc[id] || {}), [who]: v } } });
+  const setOverall = (f, v) => onChange({ ...record, ptc: { ...ptc, [f]: v } });
+  const selfComment = ptc.__selfComment || "";
+  const mgrComment = ptc.__mgrComment || "";
+  const selfDone = PTC_CRITERIA.every(c => ptc[c.id]?.selfRating);
+  const mgrDone = PTC_CRITERIA.every(c => ptc[c.id]?.mgrRating);
+  const selfTotal = PTC_CRITERIA.reduce((a, c) => a + (Number(ptc[c.id]?.selfRating) || 0), 0);
+  const mgrTotal = PTC_CRITERIA.reduce((a, c) => a + (Number(ptc[c.id]?.mgrRating) || 0), 0);
+  const maxTotal = PTC_CRITERIA.length * 5;
+
+  const submitSelf = () => { onChange({ ...record, stage: "manager", selfSubmittedAt: new Date().toISOString() }, { immediate: true }); onSaved("Submitted to manager."); notify && notify("ptc_self_submitted"); };
+  const finalize = () => { onChange({ ...record, stage: "done", managerApprovedAt: new Date().toISOString() }, { immediate: true }); onSaved("Assessment complete."); notify && notify("ptc_complete"); };
+
+  const selfEditing = actorRole === "self" && stage === "self";
+  const managerWorking = actorRole === "manager" && stage === "manager";
+  const showMgr = stage === "manager" || stage === "done";
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h3 className="text-sm font-semibold text-slate-700">Probation assessment</h3>
+          <span className="text-xs text-slate-400">Rated 1 (Poor) – 5 (Excellent)</span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+          <div><div className="text-slate-400">Employee</div><div className="font-medium text-slate-700">{subject.name}</div></div>
+          <div><div className="text-slate-400">Employee ID</div><div className="font-medium text-slate-700">{subject.employeeId}</div></div>
+          <div><div className="text-slate-400">Designation</div><div className="font-medium text-slate-700">{subject.designation}</div></div>
+          <div><div className="text-slate-400">Reporting Manager</div><div className="font-medium text-slate-700">{subject.reportingManager}</div></div>
+        </div>
+      </div>
+
+      {actorRole === "self" && stage === "manager" && <Notice icon={Clock}>Submitted. Waiting for your reporting manager's assessment.</Notice>}
+      {actorRole === "manager" && stage === "self" && <Notice icon={Clock}>Waiting for the employee's self-assessment.</Notice>}
+
+      {PTC_CRITERIA.map((c, i) => {
+        const r = ptc[c.id] || {};
+        return (
+          <div key={c.id} className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+            <div className="flex items-start gap-2"><span className="w-6 h-6 rounded-lg bg-teal-100 text-teal-700 text-xs font-semibold flex items-center justify-center shrink-0">{i + 1}</span><div><p className="text-sm font-medium text-slate-800">{c.title}</p><p className="text-xs text-slate-500">{c.desc}</p></div></div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="bg-slate-50 rounded-lg p-3 space-y-2">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-slate-600"><User className="w-3.5 h-3.5" /> Self rating</div>
+                {selfEditing ? <RatingPicker value={r.selfRating} onChange={v => setRating(c.id, "selfRating", v)} scale={PTC_SCALE} />
+                  : (r.selfRating ? <Pill className={ptcBand(r.selfRating).color}><Star className="w-3 h-3" /> {r.selfRating} · {ptcBand(r.selfRating).label}</Pill> : <span className="text-xs text-slate-400">Not rated</span>)}
+              </div>
+              {showMgr && (
+                <div className="bg-teal-50/60 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-slate-600"><UserCheck className="w-3.5 h-3.5" /> Manager rating</div>
+                  {managerWorking ? <RatingPicker value={r.mgrRating} onChange={v => setRating(c.id, "mgrRating", v)} scale={PTC_SCALE} />
+                    : (r.mgrRating ? <Pill className={ptcBand(r.mgrRating).color}><Star className="w-3 h-3" /> {r.mgrRating} · {ptcBand(r.mgrRating).label}</Pill> : <span className="text-xs text-slate-400">Not rated</span>)}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      <div className="bg-white rounded-xl border border-slate-200 p-4 grid grid-cols-2 gap-2">
+        <div className="bg-slate-50 rounded-lg p-3"><div className="text-xs text-slate-500 flex items-center gap-1"><User className="w-3.5 h-3.5" /> Self total</div><div className="text-xl font-semibold text-slate-800 mt-0.5">{selfTotal}<span className="text-xs font-normal text-slate-400"> / {maxTotal}</span></div></div>
+        {showMgr && <div className="bg-teal-50/60 rounded-lg p-3"><div className="text-xs text-slate-500 flex items-center gap-1"><UserCheck className="w-3.5 h-3.5" /> Manager total</div><div className="text-xl font-semibold text-slate-800 mt-0.5">{mgrTotal}<span className="text-xs font-normal text-slate-400"> / {maxTotal}</span></div></div>}
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+        <div className="bg-slate-50 rounded-lg p-3 space-y-2"><div className="text-xs font-medium text-slate-600">Employee remarks</div>{selfEditing ? <textarea value={selfComment} onChange={e => setOverall("__selfComment", e.target.value)} rows={2} placeholder="Your overall remarks (optional)…" className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-200" /> : <p className="text-sm text-slate-600">{selfComment || <span className="text-slate-400">—</span>}</p>}</div>
+        {showMgr && <div className="bg-teal-50/60 rounded-lg p-3 space-y-2"><div className="text-xs font-medium text-slate-600">Manager feedback</div>{managerWorking ? <textarea value={mgrComment} onChange={e => setOverall("__mgrComment", e.target.value)} rows={3} placeholder="Overall feedback…" className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-200" /> : <p className="text-sm text-slate-600">{mgrComment || <span className="text-slate-400">—</span>}</p>}</div>}
+      </div>
+
+      {selfEditing && <div className="flex gap-2"><button onClick={() => { onChange(record, { immediate: true }); onSaved("Draft saved."); }} className="flex-1 border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium px-4 py-2.5 rounded-xl flex items-center justify-center gap-1.5"><Save className="w-4 h-4" /> Save draft</button><button onClick={submitSelf} disabled={!selfDone} className={`flex-1 text-sm font-medium px-4 py-2.5 rounded-xl flex items-center justify-center gap-1.5 ${selfDone ? "bg-indigo-600 hover:bg-indigo-700 text-white" : "bg-slate-100 text-slate-400 cursor-not-allowed"}`}><Send className="w-4 h-4" /> {selfDone ? "Submit" : "Rate all 7 criteria"}</button></div>}
+      {managerWorking && <div className="flex gap-2"><button onClick={() => { onChange(record, { immediate: true }); onSaved("Draft saved."); }} className="flex-1 border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium px-4 py-2.5 rounded-xl flex items-center justify-center gap-1.5"><Save className="w-4 h-4" /> Save draft</button><button onClick={finalize} disabled={!mgrDone} className={`flex-1 text-sm font-medium px-4 py-2.5 rounded-xl flex items-center justify-center gap-1.5 ${mgrDone ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "bg-slate-100 text-slate-400 cursor-not-allowed"}`}><Send className="w-4 h-4" /> {mgrDone ? "Finalize" : "Rate all 7 criteria"}</button></div>}
+      {stage === "done" && <Notice icon={CheckCircle2} tone="emerald">Probation assessment complete.</Notice>}
+    </div>
+  );
+}
+
 // ---- Cycle activity dispatcher ----
 function CycleActivity({ cycle, subject, record, onChange, onSaved, actorRole, approvedKRAs, notify }) {
   const notifyEvent = (event, extra = {}) => notify && notify(event, { cycle, subject, ...extra });
   if (cycle.type === "Goal Setting") return <GoalActivity subject={subject} record={record} onChange={onChange} onSaved={onSaved} actorRole={actorRole} notify={notifyEvent} />;
+  if (cycle.type === "Probation to Confirmation") return <PtcActivity subject={subject} record={record} onChange={onChange} onSaved={onSaved} actorRole={actorRole} notify={notifyEvent} />;
   const hasHR = cycle.type === "Annual Performance Review";
   return <ReviewActivity subject={subject} record={record} kras={approvedKRAs} onChange={onChange} onSaved={onSaved} actorRole={actorRole} hasHR={hasHR} notify={notifyEvent} />;
 }
@@ -1538,6 +1647,7 @@ function UsersAdmin({ users, setUsers, onSaved, onError, onEditUser, cycles, onU
 
 function KRAViewModal({ subject, cycle, record, kras, onClose }) {
   const isGoal = cycle.type === "Goal Setting";
+  const isPtc = cycle.type === "Probation to Confirmation";
   const rKras = isGoal ? (record?.kras || []) : (kras || []);
   const totalW = rKras.length ? totalWeight(rKras) : 0;
   const review = !isGoal ? (record?.review || {}) : {};
@@ -1569,7 +1679,30 @@ function KRAViewModal({ subject, cycle, record, kras, onClose }) {
           {!isGoal && cycle.type === "Annual Performance Review" && <div><span className="text-slate-400">HR approved: </span><span className="text-slate-700 font-medium">{fmtDT(record?.hrApprovedAt)}</span></div>}
         </div>
 
-        {rKras.length === 0 ? (
+        {isPtc ? (() => {
+          const ptc = record?.ptc || {};
+          const selfTotal = PTC_CRITERIA.reduce((a, c) => a + (Number(ptc[c.id]?.selfRating) || 0), 0);
+          const mgrTotal = PTC_CRITERIA.reduce((a, c) => a + (Number(ptc[c.id]?.mgrRating) || 0), 0);
+          const max = PTC_CRITERIA.length * 5;
+          return (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="bg-white rounded-lg border border-slate-200 p-3"><div className="text-xs text-slate-500">Self total</div><div className="text-xl font-semibold text-slate-800">{selfTotal} / {max}</div></div>
+                <div className="bg-white rounded-lg border border-slate-200 p-3"><div className="text-xs text-slate-500">Manager total</div><div className="text-xl font-semibold text-slate-800">{mgrTotal} / {max}</div></div>
+              </div>
+              <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-slate-50 text-slate-500 text-left"><th className="px-3 py-2">Criteria</th><th className="px-3 py-2 text-center">Self</th><th className="px-3 py-2 text-center">Manager</th></tr></thead>
+                  <tbody>{PTC_CRITERIA.map(c => { const r = ptc[c.id] || {}; return (
+                    <tr key={c.id} className="border-t border-slate-100"><td className="px-3 py-2 text-slate-700">{c.title}</td><td className="px-3 py-2 text-center">{r.selfRating || "—"}</td><td className="px-3 py-2 text-center">{r.mgrRating || "—"}</td></tr>
+                  ); })}</tbody>
+                </table>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-2.5 text-sm"><span className="text-xs text-slate-500 block">Employee remarks</span>{ptc.__selfComment || "—"}</div>
+              <div className="bg-teal-50/60 rounded-lg p-2.5 text-sm"><span className="text-xs text-slate-500 block">Manager feedback</span>{ptc.__mgrComment || "—"}</div>
+            </div>
+          );
+        })() : rKras.length === 0 ? (
           <Notice icon={AlertCircle} tone="amber">{isGoal ? "No KRA sheet submitted yet." : "No approved KRA sheet found for this employee/year — a Goal Setting cycle must be approved first."}</Notice>
         ) : isGoal ? (
           <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
@@ -1656,7 +1789,7 @@ function ReportsPage({ users, cycles, records }) {
   const downloadReviewReport = () => {
     const rows = [];
     users.forEach(u => {
-      cycles.filter(c => c.type !== "Goal Setting").forEach(c => {
+      cycles.filter(c => c.type === "Mid-Year Review" || c.type === "Annual Performance Review").forEach(c => {
         if (!(c.participants || []).includes(u.employeeId)) return;
         const rec = getRec(c.id, u.employeeId);
         const review = rec ? rec.review || {} : {};
@@ -2346,6 +2479,8 @@ export default function App() {
       cycle_reset:      [["cycle_reset_employee", subject.email, subject.name]],
       reminder_employee:[["reminder_employee", subject.email, subject.name]],
       reminder_manager: [["reminder_manager", mgrTo, mgrName]],
+      ptc_self_submitted:[["ptc_self_submitted_manager", mgrTo, mgrName], ["ptc_self_submitted_employee", subject.email, subject.name]],
+      ptc_complete:     [["ptc_complete_employee", subject.email, subject.name]],
     };
     if (event === "review_to_hr") {
       hrUsers.forEach(h => emit("review_to_hr_hr", h.email, h.name, { hrName: h.name }));
