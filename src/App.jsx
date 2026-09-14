@@ -1752,6 +1752,24 @@ function ReportsPage({ users, cycles, records }) {
   const PAGE_SIZE = 30;
   const [viewing, setViewing] = useState(null);
 
+  // ── Mirrored top/bottom horizontal scrollbar for the completion table ──
+  const tableScrollRef = useRef(null);
+  const topScrollRef = useRef(null);
+  const [tableScrollWidth, setTableScrollWidth] = useState(0);
+  const syncingScroll = useRef(false);
+  const handleTopScroll = () => {
+    if (syncingScroll.current) return;
+    syncingScroll.current = true;
+    if (tableScrollRef.current && topScrollRef.current) tableScrollRef.current.scrollLeft = topScrollRef.current.scrollLeft;
+    syncingScroll.current = false;
+  };
+  const handleTableScroll = () => {
+    if (syncingScroll.current) return;
+    syncingScroll.current = true;
+    if (tableScrollRef.current && topScrollRef.current) topScrollRef.current.scrollLeft = tableScrollRef.current.scrollLeft;
+    syncingScroll.current = false;
+  };
+
   const getRec = (cid, eid) => records[`${cid}::${eid}`] || null;
   const getApprovedKras = (eid, year) => {
     const gc = cycles.find(c => c.type === "Goal Setting" && c.year === year);
@@ -1945,6 +1963,16 @@ function ReportsPage({ users, cycles, records }) {
   const currentPage = Math.min(page, totalPages);
   const pagedItems = searchedItems.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
+  useEffect(() => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    const update = () => setTableScrollWidth(el.scrollWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [pagedItems]);
+
   const downloadCompletion = () => {
     const rows = searchedItems.map(({ cycle: c, user: u, st }) => ({
       "Cycle Name": c.name || "", "Cycle Type": c.type, "Year": c.year, "Cycle Status": c.status,
@@ -2038,7 +2066,11 @@ function ReportsPage({ users, cycles, records }) {
         {searchedItems.length === 0
           ? <Notice icon={PieChart}>{search.trim() ? `No results match "${search.trim()}".` : `No participants enrolled${filterCycleId !== "all" ? " in this cycle" : ""}. Enrol employees via Cycle Management.`}</Notice>
           : (
-            <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <>
+            <div ref={topScrollRef} onScroll={handleTopScroll} className="overflow-x-auto overflow-y-hidden rounded-t-xl border border-b-0 border-slate-200" style={{ height: 14 }}>
+              <div style={{ width: tableScrollWidth, height: 1 }} />
+            </div>
+            <div ref={tableScrollRef} onScroll={handleTableScroll} className="overflow-x-auto rounded-b-xl border border-slate-200">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="bg-slate-50 text-left">
@@ -2084,6 +2116,7 @@ function ReportsPage({ users, cycles, records }) {
                 </tbody>
               </table>
             </div>
+            </>
           )
         }
 
