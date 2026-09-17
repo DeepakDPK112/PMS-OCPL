@@ -1047,6 +1047,24 @@ function CyclesAdmin({ users, cycles, setCycles, onSaved, onError, notify, onRes
   const [confirmRemind, setConfirmRemind] = useState(null); // cycle id
   const [confirmDelete, setConfirmDelete] = useState(null); // cycle object
   const [deleting, setDeleting] = useState(false);
+  const [editingCycleId, setEditingCycleId] = useState(null);
+  const [editCycleForm, setEditCycleForm] = useState(null);
+  const [savingCycle, setSavingCycle] = useState(false);
+  const startEditCycle = (c) => { setManage(null); setEditingCycleId(c.id); setEditCycleForm({ name: c.name || "", start: c.start || "", end: c.end || "" }); };
+  const cancelEditCycle = () => { setEditingCycleId(null); setEditCycleForm(null); };
+  const editCycleValid = editCycleForm && editCycleForm.start && editCycleForm.end;
+  const saveEditCycle = async () => {
+    if (!editCycleValid) return;
+    setSavingCycle(true);
+    const patch = { name: editCycleForm.name.trim() || null, start_date: editCycleForm.start, end_date: editCycleForm.end };
+    const { error } = await supabase.from("cycles").update(patch).eq("id", editingCycleId);
+    setSavingCycle(false);
+    if (error) { onError && onError("Couldn't update the cycle — please retry."); return; }
+    setCycles(cycles.map(c => c.id === editingCycleId ? { ...c, name: editCycleForm.name.trim(), start: editCycleForm.start, end: editCycleForm.end } : c));
+    setEditingCycleId(null);
+    setEditCycleForm(null);
+    onSaved("Cycle updated.");
+  };
   const doDelete = async () => {
     setDeleting(true);
     await remove(confirmDelete.id);
@@ -1149,9 +1167,26 @@ function CyclesAdmin({ users, cycles, setCycles, onSaved, onError, notify, onRes
             <div key={c.id} className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-2 flex-wrap">{c.name && <span className="font-medium text-slate-800 text-sm">{c.name}</span>}<Pill className={CYCLE_TONE[c.type]}>{c.type}</Pill><Pill className={c.status === "Active" ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-500 border-slate-200"}>{c.status}</Pill></div>
-                <div className="flex items-center gap-2"><button onClick={() => toggleStatus(c.id)} className="text-xs font-medium px-2.5 py-1 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">{c.status === "Active" ? "Close" : "Reopen"}</button><button onClick={() => setConfirmDelete(c)} title="Delete cycle" className="text-slate-300 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button></div>
+                <div className="flex items-center gap-2"><button onClick={() => (editingCycleId === c.id ? cancelEditCycle() : startEditCycle(c))} className="text-xs font-medium px-2.5 py-1 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 flex items-center gap-1"><Edit3 className="w-3.5 h-3.5" /> Edit</button><button onClick={() => toggleStatus(c.id)} className="text-xs font-medium px-2.5 py-1 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">{c.status === "Active" ? "Close" : "Reopen"}</button><button onClick={() => setConfirmDelete(c)} title="Delete cycle" className="text-slate-300 hover:text-rose-500"><Trash2 className="w-4 h-4" /></button></div>
               </div>
               {(c.start || c.end) && <div className="text-xs text-slate-400">{c.start || "—"} → {c.end || "—"}</div>}
+              {editingCycleId === c.id && (
+                <div className="bg-slate-50 rounded-lg p-3 space-y-3">
+                  <div>
+                    <label className="text-xs text-slate-500 block mb-1">Cycle Name</label>
+                    <input value={editCycleForm.name} onChange={e => setEditCycleForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Q1 Goal Setting — Retail Ops" className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div><label className="text-xs text-slate-500 block mb-1">Start <span className="text-rose-500">*</span></label><input type="date" value={editCycleForm.start} onChange={e => setEditCycleForm(f => ({ ...f, start: e.target.value }))} className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 ${!editCycleForm.start ? "border-rose-200 focus:ring-rose-200" : "border-slate-200 focus:ring-indigo-200"}`} /></div>
+                    <div><label className="text-xs text-slate-500 block mb-1">End <span className="text-rose-500">*</span></label><input type="date" value={editCycleForm.end} onChange={e => setEditCycleForm(f => ({ ...f, end: e.target.value }))} className={`w-full text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 ${!editCycleForm.end ? "border-rose-200 focus:ring-rose-200" : "border-slate-200 focus:ring-indigo-200"}`} /></div>
+                  </div>
+                  {!editCycleValid && <p className="text-xs text-amber-600 flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> Start and end dates are mandatory.</p>}
+                  <div className="flex gap-2">
+                    <button onClick={cancelEditCycle} disabled={savingCycle} className="text-xs font-medium text-slate-600 border border-slate-200 hover:bg-white px-3 py-1.5 rounded-lg">Cancel</button>
+                    <button onClick={saveEditCycle} disabled={!editCycleValid || savingCycle} className={`text-xs font-medium text-white px-3 py-1.5 rounded-lg flex items-center gap-1 ${!editCycleValid || savingCycle ? "bg-indigo-300 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"}`}><Save className="w-3.5 h-3.5" /> {savingCycle ? "Saving…" : "Save changes"}</button>
+                  </div>
+                </div>
+              )}
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <span className="text-xs text-slate-500">{(c.participants || []).length} participant(s)</span>
                 <div className="flex items-center gap-3">
