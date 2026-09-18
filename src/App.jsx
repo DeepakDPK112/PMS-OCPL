@@ -2423,13 +2423,22 @@ function RecruitmentPage({ me, users, onSaved, onError }) {
     setLoading(true);
     try {
       const [posRes, rcRes] = await Promise.all([
-        supabase.from("rec_positions").select("*").order("created_at", { ascending: false }),
-        supabase.from("rec_candidates").select("*").order("created_at", { ascending: false }),
+        supabase.from("app_settings").select("value").eq("key", "rec-positions"),
+        supabase.from("app_settings").select("value").eq("key", "rec-candidates"),
       ]);
-      if (!posRes.error) setPositions((posRes.data || []).map(r => ({ id: r.id, createdAt: r.created_at, ...r.data })));
-      if (!rcRes.error) setCandidates((rcRes.data || []).map(r => ({ id: r.id, positionId: r.position_id, createdAt: r.created_at, ...r.data })));
-    } catch (e) { /* tables may not exist yet — will show empty state */ }
+      if (posRes.data && posRes.data.length > 0) setPositions(JSON.parse(posRes.data[posRes.data.length - 1].value));
+      if (rcRes.data && rcRes.data.length > 0) setCandidates(JSON.parse(rcRes.data[rcRes.data.length - 1].value));
+    } catch (e) {}
     setLoading(false);
+  };
+
+  const persistPositions = async (next) => {
+    setPositions(next);
+    try { await supabase.from("app_settings").upsert({ key: "rec-positions", value: JSON.stringify(next) }, { onConflict: "key" }); } catch (e) {}
+  };
+  const persistCandidates = async (next) => {
+    setCandidates(next);
+    try { await supabase.from("app_settings").upsert({ key: "rec-candidates", value: JSON.stringify(next) }, { onConflict: "key" }); } catch (e) {}
   };
 
   const visiblePositions = (isHR ? positions : positions.filter(p => p.department === me.department))
@@ -2446,25 +2455,20 @@ function RecruitmentPage({ me, users, onSaved, onError }) {
 
   const savePosition = async () => {
     if (!posForm.title.trim()) { setFormErr("Position title is required."); return; }
-    if (!posForm.department) { setFormErr("Department is required."); return; }
+    if (!posForm.department.trim()) { setFormErr("Department is required."); return; }
     setSaving(true); setFormErr("");
-    const data = { title: posForm.title.trim(), department: posForm.department, location: posForm.location.trim(), openings: parseInt(posForm.openings) || 1, description: posForm.description.trim(), requirements: posForm.requirements.trim(), status: "Open", approvalLetter: posForm.approvalLetter, createdBy: me.employeeId, createdByName: me.name };
-    const { data: res, error } = await supabase.from("rec_positions").insert({ data }).select().single();
+    const newPos = { id: crypto.randomUUID(), createdAt: new Date().toISOString(), title: posForm.title.trim(), department: posForm.department.trim(), location: posForm.location.trim(), openings: parseInt(posForm.openings) || 1, description: posForm.description.trim(), requirements: posForm.requirements.trim(), status: "Open", approvalLetter: posForm.approvalLetter, createdBy: me.employeeId, createdByName: me.name };
+    const next = [newPos, ...positions];
+    await persistPositions(next);
     setSaving(false);
-    if (error) { onError("Couldn't create position — please retry."); return; }
-    const newPos = { id: res.id, createdAt: res.created_at, ...res.data };
-    setPositions(prev => [newPos, ...prev]);
     setShowAddPos(false); setPosForm(emptyPosForm); setSelPos(newPos); setStageTab("all");
     onSaved("Position created successfully.");
-    supabase.from("emails").insert({ from: "OCPL Recruitment <no-reply@ocpl.com>", to: me.email, to_name: me.name, subject: `New position opened: ${data.title}`, body: `Position: ${data.title}\nDepartment: ${data.department}\nLocation: ${data.location || "—"}\nOpenings: ${data.openings}\n\nOpened by: ${data.createdByName}`, event: "rec_position_opened", sent_at: new Date().toISOString(), deliver: false });
+    try { supabase.from("emails").insert({ from: "OCPL Recruitment <no-reply@ocpl.com>", to: me.email, to_name: me.name, subject: `New position opened: ${newPos.title}`, body: `Position: ${newPos.title}\nDepartment: ${newPos.department}\nLocation: ${newPos.location || "—"}\nOpenings: ${newPos.openings}\n\nOpened by: ${newPos.createdByName}`, event: "rec_position_opened", sent_at: new Date().toISOString(), deliver: false }); } catch(e) {}
   };
 
   const updatePosStatus = async (posId, newStatus) => {
-    const pos = positions.find(p => p.id === posId); if (!pos) return;
-    const { id: _id, createdAt: _ca, ...dataFields } = pos;
-    const { error } = await supabase.from("rec_positions").update({ data: { ...dataFields, status: newStatus } }).eq("id", posId);
-    if (error) { onError("Couldn't update status."); return; }
-    setPositions(prev => prev.map(p => p.id === posId ? { ...p, status: newStatus } : p));
+    const next = positions.map(p => p.id === posId ? { ...p, status: newStatus } : p);
+    await persistPositions(next);
     if (selPos?.id === posId) setSelPos(prev => ({ ...prev, status: newStatus }));
   };
 
@@ -2472,26 +2476,23 @@ function RecruitmentPage({ me, users, onSaved, onError }) {
     if (!candForm.name.trim()) { setFormErr("Candidate name is required."); return; }
     if (!candForm.phone.trim()) { setFormErr("Phone number is required."); return; }
     setSaving(true); setFormErr("");
-    const data = { name: candForm.name.trim(), phone: candForm.phone.trim(), email: candForm.email.trim(), currentCompany: candForm.currentCompany.trim(), experience: candForm.experience.trim(), notes: candForm.notes.trim(), stage: "sourced", stageHistory: [{ stage: "sourced", date: new Date().toISOString().split("T")[0], by: me.name }], addedBy: me.employeeId, addedByName: me.name };
-    const { data: res, error } = await supabase.from("rec_candidates").insert({ position_id: selPos.id, data }).select().single();
+    const newCand = { id: crypto.randomUUID(), positionId: selPos.id, createdAt: new Date().toISOString(), name: candForm.name.trim(), phone: candForm.phone.trim(), email: candForm.email.trim(), currentCompany: candForm.currentCompany.trim(), experience: candForm.experience.trim(), notes: candForm.notes.trim(), stage: "sourced", stageHistory: [{ stage: "sourced", date: new Date().toISOString().split("T")[0], by: me.name }], addedBy: me.employeeId, addedByName: me.name };
+    const next = [newCand, ...candidates];
+    await persistCandidates(next);
     setSaving(false);
-    if (error) { onError("Couldn't add candidate — please retry."); return; }
-    setCandidates(prev => [{ id: res.id, positionId: res.position_id, createdAt: res.created_at, ...res.data }, ...prev]);
     setShowAddCand(false); setCandForm(emptyCandForm);
     onSaved("Candidate added.");
   };
 
   const moveStage = async (cand, newStage) => {
     const history = [...(cand.stageHistory || []), { stage: newStage, date: new Date().toISOString().split("T")[0], by: me.name }];
-    const dataFields = { name: cand.name, phone: cand.phone, email: cand.email, currentCompany: cand.currentCompany, experience: cand.experience, notes: cand.notes, addedBy: cand.addedBy, addedByName: cand.addedByName, stage: newStage, stageHistory: history };
-    const { error } = await supabase.from("rec_candidates").update({ data: dataFields }).eq("id", cand.id);
-    if (error) { onError("Couldn't update stage."); return; }
     const updated = { ...cand, stage: newStage, stageHistory: history };
-    setCandidates(prev => prev.map(c => c.id === cand.id ? updated : c));
+    const next = candidates.map(c => c.id === cand.id ? updated : c);
+    await persistCandidates(next);
     if (selCand?.id === cand.id) setSelCand(updated);
     if (newStage === "offer" || newStage === "joined") {
       const pos = positions.find(p => p.id === cand.positionId);
-      supabase.from("emails").insert({ from: "OCPL Recruitment <no-reply@ocpl.com>", to: me.email, to_name: me.name, subject: `Candidate ${newStage === "joined" ? "joined" : "offer extended"}: ${cand.name}`, body: `Candidate: ${cand.name}\nPosition: ${pos?.title || "—"}\nDepartment: ${pos?.department || "—"}\nNew Stage: ${recStageLabel(newStage)}\n\nUpdated by: ${me.name}`, event: `rec_candidate_${newStage}`, sent_at: new Date().toISOString(), deliver: false });
+      try { supabase.from("emails").insert({ from: "OCPL Recruitment <no-reply@ocpl.com>", to: me.email, to_name: me.name, subject: `Candidate ${newStage === "joined" ? "joined" : "offer extended"}: ${cand.name}`, body: `Candidate: ${cand.name}\nPosition: ${pos?.title || "—"}\nDepartment: ${pos?.department || "—"}\nNew Stage: ${recStageLabel(newStage)}\n\nUpdated by: ${me.name}`, event: `rec_candidate_${newStage}`, sent_at: new Date().toISOString(), deliver: false }); } catch(e) {}
     }
   };
 
