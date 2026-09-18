@@ -2411,6 +2411,9 @@ function RecruitmentPage({ me, users, onSaved, onError }) {
   const [selCand, setSelCand] = useState(null);
   const [saving, setSaving] = useState(false);
   const [formErr, setFormErr] = useState("");
+  const [recView, setRecView] = useState("pipeline");
+  const [rptDeptF, setRptDeptF] = useState("all");
+  const [rptStatusF, setRptStatusF] = useState("all");
 
   const emptyPosForm = { title: "", department: "", location: "", openings: "1", description: "", requirements: "", approvalLetter: null };
   const [posForm, setPosForm] = useState(emptyPosForm);
@@ -2512,10 +2515,109 @@ function RecruitmentPage({ me, users, onSaved, onError }) {
           <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2"><Briefcase className="w-5 h-5 text-indigo-600" /> Recruitment Corporate</h2>
           <p className="text-xs text-slate-500 mt-0.5">{isHR ? "All departments" : `${me.department} — your department only`}</p>
         </div>
-        {isHR && <button onClick={() => { setShowAddPos(true); setFormErr(""); setPosForm(emptyPosForm); }} className="flex items-center gap-1.5 text-sm font-medium bg-indigo-600 text-white px-4 py-2 rounded-xl hover:bg-indigo-700 transition"><Plus className="w-4 h-4" /> New Position</button>}
+        <div className="flex items-center gap-2">
+          <div className="flex bg-slate-100 rounded-xl p-1 gap-1">
+            <button onClick={() => setRecView("pipeline")} className={`text-xs font-medium px-3 py-1.5 rounded-lg transition ${recView === "pipeline" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>Pipeline</button>
+            <button onClick={() => setRecView("reports")} className={`text-xs font-medium px-3 py-1.5 rounded-lg transition ${recView === "reports" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>Reports</button>
+          </div>
+          {isHR && recView === "pipeline" && <button onClick={() => { setShowAddPos(true); setFormErr(""); setPosForm(emptyPosForm); }} className="flex items-center gap-1.5 text-sm font-medium bg-indigo-600 text-white px-4 py-2 rounded-xl hover:bg-indigo-700 transition"><Plus className="w-4 h-4" /> New Position</button>}
+        </div>
       </div>
 
-      <div className="flex gap-4 items-start">
+      {recView === "reports" && (() => {
+        const allPos = isHR ? positions : positions.filter(p => p.department === me.department);
+        const deptList = ["all", ...new Set(allPos.map(p => p.department).filter(Boolean))].filter((v, i, a) => a.indexOf(v) === i);
+        const filtered = allPos.filter(p => (rptDeptF === "all" || p.department === rptDeptF) && (rptStatusF === "all" || p.status === rptStatusF));
+        const totalCands = filtered.reduce((s, p) => s + candidates.filter(c => c.positionId === p.id).length, 0);
+        const totalJoined = filtered.reduce((s, p) => s + candidates.filter(c => c.positionId === p.id && c.stage === "joined").length, 0);
+        const totalOpen = filtered.filter(p => p.status === "Open").length;
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { label: "Total Positions", value: filtered.length, cls: "text-indigo-700 bg-indigo-50 border-indigo-200" },
+                { label: "Open Positions", value: totalOpen, cls: "text-emerald-700 bg-emerald-50 border-emerald-200" },
+                { label: "Total Candidates", value: totalCands, cls: "text-violet-700 bg-violet-50 border-violet-200" },
+                { label: "Total Joined", value: totalJoined, cls: "text-amber-700 bg-amber-50 border-amber-200" },
+              ].map(s => (
+                <div key={s.label} className={`rounded-xl border p-4 ${s.cls}`}>
+                  <p className="text-2xl font-bold">{s.value}</p>
+                  <p className="text-xs font-medium mt-0.5 opacity-80">{s.label}</p>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <select value={rptDeptF} onChange={e => setRptDeptF(e.target.value)} className="text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                {deptList.map(d => <option key={d} value={d}>{d === "all" ? "All Departments" : d}</option>)}
+              </select>
+              <select value={rptStatusF} onChange={e => setRptStatusF(e.target.value)} className="text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                <option value="all">All Statuses</option><option value="Open">Open</option><option value="On Hold">On Hold</option><option value="Closed">Closed</option>
+              </select>
+            </div>
+            {filtered.length === 0 ? (
+              <div className="bg-white rounded-xl border border-slate-200 py-12 text-center text-slate-400 text-sm">No positions match the selected filters.</div>
+            ) : (
+              <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
+                <table className="w-full text-sm min-w-max">
+                  <thead>
+                    <tr className="border-b border-slate-100 bg-slate-50">
+                      <th className="text-left text-xs font-semibold text-slate-500 px-4 py-3">Position</th>
+                      <th className="text-left text-xs font-semibold text-slate-500 px-3 py-3">Department</th>
+                      <th className="text-left text-xs font-semibold text-slate-500 px-3 py-3">Location</th>
+                      <th className="text-center text-xs font-semibold text-slate-500 px-3 py-3">Openings</th>
+                      <th className="text-center text-xs font-semibold text-slate-500 px-3 py-3">Status</th>
+                      {REC_STAGES.map(s => <th key={s.id} className="text-center text-xs font-semibold text-slate-500 px-3 py-3">{s.label}</th>)}
+                      <th className="text-center text-xs font-semibold text-slate-500 px-3 py-3">Total</th>
+                      <th className="text-center text-xs font-semibold text-slate-500 px-3 py-3">Filled</th>
+                      <th className="text-left text-xs font-semibold text-slate-500 px-3 py-3">Created</th>
+                      <th className="text-left text-xs font-semibold text-slate-500 px-3 py-3">Created By</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {filtered.map(p => {
+                      const pc = candidates.filter(c => c.positionId === p.id);
+                      const filled = pc.filter(c => c.stage === "joined").length;
+                      const sc = p.status === "Open" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : p.status === "On Hold" ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-slate-100 text-slate-600 border-slate-300";
+                      return (
+                        <tr key={p.id} className="hover:bg-slate-50 transition">
+                          <td className="px-4 py-3 font-medium text-slate-800 whitespace-nowrap">{p.title}</td>
+                          <td className="px-3 py-3 text-slate-600 whitespace-nowrap">{p.department}</td>
+                          <td className="px-3 py-3 text-slate-500 whitespace-nowrap">{p.location || "—"}</td>
+                          <td className="px-3 py-3 text-center text-slate-700 font-medium">{p.openings}</td>
+                          <td className="px-3 py-3 text-center"><span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${sc}`}>{p.status}</span></td>
+                          {REC_STAGES.map(s => {
+                            const cnt = pc.filter(c => c.stage === s.id).length;
+                            return <td key={s.id} className="px-3 py-3 text-center"><span className={cnt > 0 ? `text-xs font-semibold px-2 py-0.5 rounded-full border ${s.cls}` : "text-slate-300 text-xs"}>{cnt > 0 ? cnt : "—"}</span></td>;
+                          })}
+                          <td className="px-3 py-3 text-center font-medium text-slate-700">{pc.length}</td>
+                          <td className="px-3 py-3 text-center"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${filled > 0 ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "text-slate-300 border-slate-100"}`}>{filled}/{p.openings}</span></td>
+                          <td className="px-3 py-3 text-slate-500 text-xs whitespace-nowrap">{recFmtDate(p.createdAt)}</td>
+                          <td className="px-3 py-3 text-slate-500 text-xs whitespace-nowrap">{p.createdByName || "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-slate-200 bg-slate-50">
+                      <td colSpan={4} className="px-4 py-3 text-xs font-semibold text-slate-600">Total ({filtered.length} positions)</td>
+                      <td className="px-3 py-3"></td>
+                      {REC_STAGES.map(s => {
+                        const tot = filtered.reduce((sum, p) => sum + candidates.filter(c => c.positionId === p.id && c.stage === s.id).length, 0);
+                        return <td key={s.id} className="px-3 py-3 text-center text-xs font-bold text-slate-700">{tot || "—"}</td>;
+                      })}
+                      <td className="px-3 py-3 text-center text-xs font-bold text-slate-700">{totalCands}</td>
+                      <td className="px-3 py-3 text-center text-xs font-bold text-emerald-700">{totalJoined}/{filtered.reduce((s, p) => s + p.openings, 0)}</td>
+                      <td colSpan={2}></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {recView === "pipeline" && <div className="flex gap-4 items-start">
         {/* Position list */}
         <div className="w-72 shrink-0 space-y-2">
           <div className="flex gap-2">
@@ -2638,7 +2740,7 @@ function RecruitmentPage({ me, users, onSaved, onError }) {
             <div className="text-center"><Briefcase className="w-8 h-8 mx-auto mb-2 opacity-30" /><p>Select a position to view its pipeline</p></div>
           </div>
         )}
-      </div>
+      </div>}
 
       {/* Add Position modal */}
       {showAddPos && (
