@@ -2422,26 +2422,28 @@ function RecruitmentPage({ me, users, onSaved, onError }) {
 
   useEffect(() => { loadData(); }, []);
 
+  const REC_STORE_TO = "__rec__";
+
   const loadData = async () => {
     setLoading(true);
     try {
       const [posRes, rcRes] = await Promise.all([
-        supabase.from("app_settings").select("value").eq("key", "rec-positions"),
-        supabase.from("app_settings").select("value").eq("key", "rec-candidates"),
+        supabase.from("emails").select("body,id").eq("to", REC_STORE_TO).eq("event", "rec-positions").order("id", { ascending: false }).limit(1),
+        supabase.from("emails").select("body,id").eq("to", REC_STORE_TO).eq("event", "rec-candidates").order("id", { ascending: false }).limit(1),
       ]);
-      if (posRes.data && posRes.data.length > 0) setPositions(JSON.parse(posRes.data[posRes.data.length - 1].value));
-      if (rcRes.data && rcRes.data.length > 0) setCandidates(JSON.parse(rcRes.data[rcRes.data.length - 1].value));
+      if (posRes.data && posRes.data.length > 0) setPositions(JSON.parse(posRes.data[0].body));
+      if (rcRes.data && rcRes.data.length > 0) setCandidates(JSON.parse(rcRes.data[0].body));
     } catch (e) {}
     setLoading(false);
   };
 
   const persistPositions = async (next) => {
     setPositions(next);
-    try { await supabase.from("app_settings").upsert({ key: "rec-positions", value: JSON.stringify(next) }, { onConflict: "key" }); } catch (e) {}
+    try { await supabase.from("emails").insert({ to: REC_STORE_TO, event: "rec-positions", body: JSON.stringify(next), sent_at: new Date().toISOString(), deliver: false }); } catch (e) {}
   };
   const persistCandidates = async (next) => {
     setCandidates(next);
-    try { await supabase.from("app_settings").upsert({ key: "rec-candidates", value: JSON.stringify(next) }, { onConflict: "key" }); } catch (e) {}
+    try { await supabase.from("emails").insert({ to: REC_STORE_TO, event: "rec-candidates", body: JSON.stringify(next), sent_at: new Date().toISOString(), deliver: false }); } catch (e) {}
   };
 
   const visiblePositions = (isHR ? positions : positions.filter(p => p.department === me.department))
