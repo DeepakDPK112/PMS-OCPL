@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Target, CheckCircle2, Clock, TrendingUp, Star, Send, Plus, Trash2, MessageSquare, ClipboardCheck, ChevronRight, UserCheck, Sparkles, AlertCircle, User, Percent, ArrowLeft, Download, Paperclip, Save, ShieldCheck, Users, UserPlus, Upload, Calendar, Play, LogOut, Edit3, RefreshCw, Mail, BarChart2, FileText, PieChart, Eye, EyeOff, KeyRound } from "lucide-react";
+import { Target, CheckCircle2, Clock, TrendingUp, Star, Send, Plus, Trash2, MessageSquare, ClipboardCheck, ChevronRight, UserCheck, Sparkles, AlertCircle, User, Percent, ArrowLeft, Download, Paperclip, Save, ShieldCheck, Users, UserPlus, Upload, Calendar, Play, LogOut, Edit3, RefreshCw, Mail, BarChart2, FileText, PieChart, Eye, EyeOff, KeyRound, Briefcase, MapPin, Phone, X, Search } from "lucide-react";
 import * as XLSX from "xlsx";
 import { supabase } from "./supabaseClient";
 
@@ -2380,6 +2380,385 @@ function ChangePwdModal({ me, onSave, onClose }) {
   );
 }
 
+// ---- Recruitment Corporate ----
+const REC_STAGES = [
+  { id: "sourced",    label: "Sourced",     cls: "bg-slate-100 text-slate-700 border-slate-200",    text: "text-slate-700" },
+  { id: "screened",   label: "Screened",    cls: "bg-blue-50 text-blue-700 border-blue-200",         text: "text-blue-700" },
+  { id: "interview1", label: "Interview 1", cls: "bg-violet-50 text-violet-700 border-violet-200",   text: "text-violet-700" },
+  { id: "interview2", label: "Interview 2", cls: "bg-purple-50 text-purple-700 border-purple-200",   text: "text-purple-700" },
+  { id: "offer",      label: "Offer",       cls: "bg-amber-50 text-amber-700 border-amber-200",      text: "text-amber-700" },
+  { id: "joined",     label: "Joined",      cls: "bg-emerald-50 text-emerald-700 border-emerald-200",text: "text-emerald-700" },
+  { id: "rejected",   label: "Rejected",    cls: "bg-rose-50 text-rose-700 border-rose-200",         text: "text-rose-700" },
+];
+function recStageCls(id) { return (REC_STAGES.find(s => s.id === id) || REC_STAGES[0]).cls; }
+function recStageLabel(id) { return (REC_STAGES.find(s => s.id === id) || { label: id }).label; }
+function recFmtDate(iso) { try { const d = new Date(iso); const m = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()]; return `${String(d.getDate()).padStart(2,"0")}-${m}-${d.getFullYear()}`; } catch { return "—"; } }
+
+function RecruitmentPage({ me, users, onSaved, onError }) {
+  const isHR = me.role === "hr";
+  const canManage = me.role === "hr" || me.role === "manager";
+  const depts = [...new Set(users.map(u => u.department).filter(Boolean))].sort();
+
+  const [positions, setPositions] = useState([]);
+  const [candidates, setCandidates] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selPos, setSelPos] = useState(null);
+  const [stageTab, setStageTab] = useState("all");
+  const [posSearch, setPosSearch] = useState("");
+  const [posStatusF, setPosStatusF] = useState("Open");
+  const [showAddPos, setShowAddPos] = useState(false);
+  const [showAddCand, setShowAddCand] = useState(false);
+  const [selCand, setSelCand] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [formErr, setFormErr] = useState("");
+
+  const emptyPosForm = { title: "", department: "", location: "", openings: "1", description: "", requirements: "", approvalLetter: null };
+  const [posForm, setPosForm] = useState(emptyPosForm);
+  const emptyCandForm = { name: "", phone: "", email: "", currentCompany: "", experience: "", notes: "" };
+  const [candForm, setCandForm] = useState(emptyCandForm);
+
+  useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const [posRes, rcRes] = await Promise.all([
+        supabase.from("rec_positions").select("*").order("created_at", { ascending: false }),
+        supabase.from("rec_candidates").select("*").order("created_at", { ascending: false }),
+      ]);
+      if (!posRes.error) setPositions((posRes.data || []).map(r => ({ id: r.id, createdAt: r.created_at, ...r.data })));
+      if (!rcRes.error) setCandidates((rcRes.data || []).map(r => ({ id: r.id, positionId: r.position_id, createdAt: r.created_at, ...r.data })));
+    } catch (e) { /* tables may not exist yet — will show empty state */ }
+    setLoading(false);
+  };
+
+  const visiblePositions = (isHR ? positions : positions.filter(p => p.department === me.department))
+    .filter(p => {
+      const ms = !posSearch || p.title.toLowerCase().includes(posSearch.toLowerCase()) || (p.department || "").toLowerCase().includes(posSearch.toLowerCase());
+      const mst = posStatusF === "all" || p.status === posStatusF;
+      return ms && mst;
+    });
+
+  const posCands = selPos ? candidates.filter(c => c.positionId === selPos.id) : [];
+  const visibleCands = stageTab === "all" ? posCands : posCands.filter(c => c.stage === stageTab);
+  const stageCounts = REC_STAGES.reduce((a, s) => { a[s.id] = posCands.filter(c => c.stage === s.id).length; return a; }, {});
+  const filled = selPos ? posCands.filter(c => c.stage === "joined").length : 0;
+
+  const savePosition = async () => {
+    if (!posForm.title.trim()) { setFormErr("Position title is required."); return; }
+    if (!posForm.department) { setFormErr("Department is required."); return; }
+    setSaving(true); setFormErr("");
+    const data = { title: posForm.title.trim(), department: posForm.department, location: posForm.location.trim(), openings: parseInt(posForm.openings) || 1, description: posForm.description.trim(), requirements: posForm.requirements.trim(), status: "Open", approvalLetter: posForm.approvalLetter, createdBy: me.employeeId, createdByName: me.name };
+    const { data: res, error } = await supabase.from("rec_positions").insert({ data }).select().single();
+    setSaving(false);
+    if (error) { onError("Couldn't create position — please retry."); return; }
+    const newPos = { id: res.id, createdAt: res.created_at, ...res.data };
+    setPositions(prev => [newPos, ...prev]);
+    setShowAddPos(false); setPosForm(emptyPosForm); setSelPos(newPos); setStageTab("all");
+    onSaved("Position created successfully.");
+    supabase.from("emails").insert({ from: "OCPL Recruitment <no-reply@ocpl.com>", to: me.email, to_name: me.name, subject: `New position opened: ${data.title}`, body: `Position: ${data.title}\nDepartment: ${data.department}\nLocation: ${data.location || "—"}\nOpenings: ${data.openings}\n\nOpened by: ${data.createdByName}`, event: "rec_position_opened", sent_at: new Date().toISOString(), deliver: false });
+  };
+
+  const updatePosStatus = async (posId, newStatus) => {
+    const pos = positions.find(p => p.id === posId); if (!pos) return;
+    const { id: _id, createdAt: _ca, ...dataFields } = pos;
+    const { error } = await supabase.from("rec_positions").update({ data: { ...dataFields, status: newStatus } }).eq("id", posId);
+    if (error) { onError("Couldn't update status."); return; }
+    setPositions(prev => prev.map(p => p.id === posId ? { ...p, status: newStatus } : p));
+    if (selPos?.id === posId) setSelPos(prev => ({ ...prev, status: newStatus }));
+  };
+
+  const saveCand = async () => {
+    if (!candForm.name.trim()) { setFormErr("Candidate name is required."); return; }
+    if (!candForm.phone.trim()) { setFormErr("Phone number is required."); return; }
+    setSaving(true); setFormErr("");
+    const data = { name: candForm.name.trim(), phone: candForm.phone.trim(), email: candForm.email.trim(), currentCompany: candForm.currentCompany.trim(), experience: candForm.experience.trim(), notes: candForm.notes.trim(), stage: "sourced", stageHistory: [{ stage: "sourced", date: new Date().toISOString().split("T")[0], by: me.name }], addedBy: me.employeeId, addedByName: me.name };
+    const { data: res, error } = await supabase.from("rec_candidates").insert({ position_id: selPos.id, data }).select().single();
+    setSaving(false);
+    if (error) { onError("Couldn't add candidate — please retry."); return; }
+    setCandidates(prev => [{ id: res.id, positionId: res.position_id, createdAt: res.created_at, ...res.data }, ...prev]);
+    setShowAddCand(false); setCandForm(emptyCandForm);
+    onSaved("Candidate added.");
+  };
+
+  const moveStage = async (cand, newStage) => {
+    const history = [...(cand.stageHistory || []), { stage: newStage, date: new Date().toISOString().split("T")[0], by: me.name }];
+    const dataFields = { name: cand.name, phone: cand.phone, email: cand.email, currentCompany: cand.currentCompany, experience: cand.experience, notes: cand.notes, addedBy: cand.addedBy, addedByName: cand.addedByName, stage: newStage, stageHistory: history };
+    const { error } = await supabase.from("rec_candidates").update({ data: dataFields }).eq("id", cand.id);
+    if (error) { onError("Couldn't update stage."); return; }
+    const updated = { ...cand, stage: newStage, stageHistory: history };
+    setCandidates(prev => prev.map(c => c.id === cand.id ? updated : c));
+    if (selCand?.id === cand.id) setSelCand(updated);
+    if (newStage === "offer" || newStage === "joined") {
+      const pos = positions.find(p => p.id === cand.positionId);
+      supabase.from("emails").insert({ from: "OCPL Recruitment <no-reply@ocpl.com>", to: me.email, to_name: me.name, subject: `Candidate ${newStage === "joined" ? "joined" : "offer extended"}: ${cand.name}`, body: `Candidate: ${cand.name}\nPosition: ${pos?.title || "—"}\nDepartment: ${pos?.department || "—"}\nNew Stage: ${recStageLabel(newStage)}\n\nUpdated by: ${me.name}`, event: `rec_candidate_${newStage}`, sent_at: new Date().toISOString(), deliver: false });
+    }
+  };
+
+  const handleApprovalFile = (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => setPosForm(f => ({ ...f, approvalLetter: { name: file.name, dataUrl: ev.target.result } }));
+    reader.readAsDataURL(file);
+  };
+
+  if (loading) return <div className="flex items-center justify-center h-40 text-slate-400 text-sm">Loading recruitment data…</div>;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2"><Briefcase className="w-5 h-5 text-indigo-600" /> Recruitment Corporate</h2>
+          <p className="text-xs text-slate-500 mt-0.5">{isHR ? "All departments" : `${me.department} — your department only`}</p>
+        </div>
+        {isHR && <button onClick={() => { setShowAddPos(true); setFormErr(""); setPosForm(emptyPosForm); }} className="flex items-center gap-1.5 text-sm font-medium bg-indigo-600 text-white px-4 py-2 rounded-xl hover:bg-indigo-700 transition"><Plus className="w-4 h-4" /> New Position</button>}
+      </div>
+
+      <div className="flex gap-4 items-start">
+        {/* Position list */}
+        <div className="w-72 shrink-0 space-y-2">
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+              <input value={posSearch} onChange={e => setPosSearch(e.target.value)} placeholder="Search…" className="w-full text-sm border border-slate-200 rounded-xl pl-8 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition" />
+            </div>
+            <select value={posStatusF} onChange={e => setPosStatusF(e.target.value)} className="text-xs border border-slate-200 rounded-xl px-2 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300">
+              <option value="all">All</option><option value="Open">Open</option><option value="On Hold">On Hold</option><option value="Closed">Closed</option>
+            </select>
+          </div>
+          {visiblePositions.length === 0 && (
+            <div className="bg-white rounded-xl border border-slate-200 py-10 text-center text-slate-400 text-sm">
+              {isHR ? "No positions yet." : "No positions in your department."}
+            </div>
+          )}
+          <div className="space-y-2 max-h-[70vh] overflow-y-auto pr-0.5">
+            {visiblePositions.map(p => {
+              const pc = candidates.filter(c => c.positionId === p.id);
+              const pf = pc.filter(c => c.stage === "joined").length;
+              const sc = p.status === "Open" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : p.status === "On Hold" ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-slate-100 text-slate-600 border-slate-300";
+              return (
+                <button key={p.id} onClick={() => { setSelPos(p); setStageTab("all"); }} className={`w-full text-left bg-white rounded-xl border p-4 transition hover:shadow-sm ${selPos?.id === p.id ? "border-indigo-400 ring-1 ring-indigo-300" : "border-slate-200 hover:border-indigo-200"}`}>
+                  <div className="flex items-start justify-between gap-2 mb-1.5">
+                    <span className="font-medium text-slate-800 text-sm leading-tight">{p.title}</span>
+                    <span className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full border ${sc}`}>{p.status}</span>
+                  </div>
+                  <div className="text-xs text-slate-500 space-y-0.5 mb-2">
+                    <div className="flex items-center gap-1"><Users className="w-3 h-3 shrink-0" />{p.department}</div>
+                    {p.location && <div className="flex items-center gap-1"><MapPin className="w-3 h-3 shrink-0" />{p.location}</div>}
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-slate-400">
+                    <span>{pc.length} candidate{pc.length !== 1 ? "s" : ""}</span>
+                    <span>{pf}/{p.openings} filled</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Position detail */}
+        {selPos ? (
+          <div className="flex-1 min-w-0 space-y-4">
+            <div className="bg-white rounded-xl border border-slate-200 p-5">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                  <h3 className="font-semibold text-slate-900">{selPos.title}</h3>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-sm text-slate-500">
+                    <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" />{selPos.department}</span>
+                    {selPos.location && <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" />{selPos.location}</span>}
+                    <span className="flex items-center gap-1"><Target className="w-3.5 h-3.5" />{selPos.openings} opening{selPos.openings !== 1 ? "s" : ""}</span>
+                    <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />{filled} filled</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {isHR && <select value={selPos.status} onChange={e => updatePosStatus(selPos.id, e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"><option value="Open">Open</option><option value="On Hold">On Hold</option><option value="Closed">Closed</option></select>}
+                  {selPos.approvalLetter && <a href={selPos.approvalLetter.dataUrl} download={selPos.approvalLetter.name} className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-lg hover:bg-indigo-100 transition"><Download className="w-3.5 h-3.5" />Approval Letter</a>}
+                  {canManage && selPos.status === "Open" && <button onClick={() => { setShowAddCand(true); setFormErr(""); setCandForm(emptyCandForm); }} className="flex items-center gap-1.5 text-xs font-medium bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700 transition"><UserPlus className="w-3.5 h-3.5" />Add Candidate</button>}
+                </div>
+              </div>
+              {(selPos.description || selPos.requirements) && (
+                <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-600">
+                  {selPos.description && <div><span className="font-medium text-slate-700 block mb-1">Job Description</span>{selPos.description}</div>}
+                  {selPos.requirements && <div><span className="font-medium text-slate-700 block mb-1">Requirements</span>{selPos.requirements}</div>}
+                </div>
+              )}
+              <p className="text-xs text-slate-400 mt-3">Created by {selPos.createdByName} · {recFmtDate(selPos.createdAt)}</p>
+            </div>
+
+            {/* Stage tabs */}
+            <div className="flex items-center gap-1 overflow-x-auto pb-1">
+              <button onClick={() => setStageTab("all")} className={`text-xs font-medium px-3 py-1.5 rounded-lg whitespace-nowrap transition ${stageTab === "all" ? "bg-indigo-600 text-white" : "text-slate-500 hover:text-slate-800 hover:bg-slate-100"}`}>All ({posCands.length})</button>
+              {REC_STAGES.map(s => (
+                <button key={s.id} onClick={() => setStageTab(s.id)} className={`text-xs font-medium px-3 py-1.5 rounded-lg whitespace-nowrap transition ${stageTab === s.id ? "bg-indigo-600 text-white" : "text-slate-500 hover:text-slate-800 hover:bg-slate-100"}`}>
+                  {s.label}{stageCounts[s.id] > 0 && ` (${stageCounts[s.id]})`}
+                </button>
+              ))}
+            </div>
+
+            {/* Candidate cards */}
+            {visibleCands.length === 0 ? (
+              <div className="bg-white rounded-xl border border-slate-200 py-12 text-center text-slate-400 text-sm">
+                {posCands.length === 0 ? "No candidates yet. Click 'Add Candidate' to start sourcing." : "No candidates in this stage."}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {visibleCands.map(c => (
+                  <div key={c.id} className="bg-white rounded-xl border border-slate-200 p-4 hover:shadow-sm transition">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <span className="font-medium text-slate-800 text-sm">{c.name}</span>
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${recStageCls(c.stage)}`}>{recStageLabel(c.stage)}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-500">
+                          {c.currentCompany && <span>{c.currentCompany}</span>}
+                          {c.experience && <span>{c.experience} exp</span>}
+                          {c.phone && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{c.phone}</span>}
+                          {c.email && <span>{c.email}</span>}
+                        </div>
+                        {c.notes && <p className="text-xs text-slate-400 mt-1 line-clamp-1">{c.notes}</p>}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {canManage && c.stage !== "joined" && c.stage !== "rejected" && (
+                          <select value={c.stage} onChange={e => moveStage(c, e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                            {REC_STAGES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+                          </select>
+                        )}
+                        <button onClick={() => setSelCand(c)} className="text-xs text-indigo-600 hover:underline font-medium">View</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex-1 flex items-center justify-center py-20 text-slate-400 text-sm bg-white rounded-xl border border-slate-200 border-dashed">
+            <div className="text-center"><Briefcase className="w-8 h-8 mx-auto mb-2 opacity-30" /><p>Select a position to view its pipeline</p></div>
+          </div>
+        )}
+      </div>
+
+      {/* Add Position modal */}
+      {showAddPos && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-slate-900 flex items-center gap-2"><Briefcase className="w-4 h-4 text-indigo-600" />New Position</h3>
+              <button onClick={() => setShowAddPos(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button>
+            </div>
+            {formErr && <p className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{formErr}</p>}
+            <div className="space-y-3">
+              <div><label className="block text-xs font-medium text-slate-600 mb-1">Position Title *</label><input value={posForm.title} onChange={e => setPosForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g. Store Manager" className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition" /></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Department *</label>
+                  <select value={posForm.department} onChange={e => setPosForm(f => ({ ...f, department: e.target.value }))} className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                    <option value="">Select…</option>{depts.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Location</label><input value={posForm.location} onChange={e => setPosForm(f => ({ ...f, location: e.target.value }))} placeholder="e.g. Chennai" className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition" /></div>
+              </div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1">Number of Openings</label><input type="number" min="1" value={posForm.openings} onChange={e => setPosForm(f => ({ ...f, openings: e.target.value }))} className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition" /></div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1">Job Description</label><textarea value={posForm.description} onChange={e => setPosForm(f => ({ ...f, description: e.target.value }))} rows={3} placeholder="Role responsibilities…" className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition resize-none" /></div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1">Requirements</label><textarea value={posForm.requirements} onChange={e => setPosForm(f => ({ ...f, requirements: e.target.value }))} rows={2} placeholder="Skills, qualifications…" className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition resize-none" /></div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1">Approval Letter</label>
+                {posForm.approvalLetter ? (
+                  <div className="flex items-center gap-2 text-xs bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
+                    <Paperclip className="w-3.5 h-3.5 text-indigo-600 shrink-0" /><span className="text-indigo-700 flex-1 truncate">{posForm.approvalLetter.name}</span>
+                    <button onClick={() => setPosForm(f => ({ ...f, approvalLetter: null }))} className="text-slate-400 hover:text-rose-500"><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                ) : (
+                  <label className="flex items-center gap-2 text-xs text-slate-500 border border-dashed border-slate-300 rounded-xl px-3 py-3 cursor-pointer hover:border-indigo-300 hover:bg-indigo-50 transition">
+                    <Upload className="w-4 h-4 text-slate-400" />Upload approval letter (PDF / image)<input type="file" accept=".pdf,image/*" className="hidden" onChange={handleApprovalFile} />
+                  </label>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setShowAddPos(false)} className="flex-1 text-sm border border-slate-200 rounded-xl py-2.5 text-slate-600 hover:bg-slate-50 transition">Cancel</button>
+              <button onClick={savePosition} disabled={saving} className="flex-1 text-sm bg-indigo-600 text-white rounded-xl py-2.5 font-medium hover:bg-indigo-700 disabled:opacity-50 transition">{saving ? "Creating…" : "Create Position"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Candidate modal */}
+      {showAddCand && selPos && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-slate-900 flex items-center gap-2"><UserPlus className="w-4 h-4 text-indigo-600" />Add Candidate</h3>
+              <button onClick={() => setShowAddCand(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button>
+            </div>
+            <p className="text-xs text-slate-500 -mt-2">Position: <span className="font-medium text-slate-700">{selPos.title}</span></p>
+            {formErr && <p className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{formErr}</p>}
+            <div className="space-y-3">
+              <div><label className="block text-xs font-medium text-slate-600 mb-1">Full Name *</label><input value={candForm.name} onChange={e => setCandForm(f => ({ ...f, name: e.target.value }))} placeholder="Candidate name" className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition" /></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Phone *</label><input value={candForm.phone} onChange={e => setCandForm(f => ({ ...f, phone: e.target.value }))} placeholder="9876543210" className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition" /></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Email</label><input value={candForm.email} onChange={e => setCandForm(f => ({ ...f, email: e.target.value }))} placeholder="email@example.com" className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition" /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Current Company</label><input value={candForm.currentCompany} onChange={e => setCandForm(f => ({ ...f, currentCompany: e.target.value }))} placeholder="Company name" className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition" /></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Experience</label><input value={candForm.experience} onChange={e => setCandForm(f => ({ ...f, experience: e.target.value }))} placeholder="e.g. 3 years" className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition" /></div>
+              </div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1">Notes</label><textarea value={candForm.notes} onChange={e => setCandForm(f => ({ ...f, notes: e.target.value }))} rows={2} placeholder="Any notes about this candidate…" className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition resize-none" /></div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setShowAddCand(false)} className="flex-1 text-sm border border-slate-200 rounded-xl py-2.5 text-slate-600 hover:bg-slate-50 transition">Cancel</button>
+              <button onClick={saveCand} disabled={saving} className="flex-1 text-sm bg-indigo-600 text-white rounded-xl py-2.5 font-medium hover:bg-indigo-700 disabled:opacity-50 transition">{saving ? "Adding…" : "Add Candidate"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Candidate detail modal */}
+      {selCand && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-slate-900">{selCand.name}</h3>
+              <button onClick={() => setSelCand(null)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-sm text-slate-600">
+              {selCand.currentCompany && <div><span className="text-xs text-slate-400 block mb-0.5">Current Company</span>{selCand.currentCompany}</div>}
+              {selCand.experience && <div><span className="text-xs text-slate-400 block mb-0.5">Experience</span>{selCand.experience}</div>}
+              {selCand.phone && <div><span className="text-xs text-slate-400 block mb-0.5">Phone</span>{selCand.phone}</div>}
+              {selCand.email && <div><span className="text-xs text-slate-400 block mb-0.5">Email</span>{selCand.email}</div>}
+            </div>
+            {selCand.notes && <div className="bg-slate-50 rounded-lg p-3 text-xs text-slate-600"><span className="font-medium text-slate-700 block mb-1">Notes</span>{selCand.notes}</div>}
+            <div className="flex items-center gap-2"><span className="text-xs font-medium text-slate-600">Current Stage</span><span className={`text-xs font-medium px-2.5 py-1 rounded-full border ${recStageCls(selCand.stage)}`}>{recStageLabel(selCand.stage)}</span></div>
+            {canManage && selCand.stage !== "joined" && selCand.stage !== "rejected" && (
+              <div>
+                <span className="text-xs font-medium text-slate-600 block mb-2">Move to</span>
+                <div className="flex flex-wrap gap-2">
+                  {REC_STAGES.filter(s => s.id !== selCand.stage).map(s => (
+                    <button key={s.id} onClick={() => moveStage(selCand, s.id)} className={`text-xs font-medium px-3 py-1.5 rounded-full border transition hover:opacity-80 ${s.cls}`}>{s.label}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(selCand.stageHistory || []).length > 0 && (
+              <div>
+                <span className="text-xs font-medium text-slate-600 block mb-2">Stage History</span>
+                <div className="space-y-1">
+                  {[...selCand.stageHistory].reverse().map((h, i) => (
+                    <div key={i} className="flex items-center justify-between text-xs bg-slate-50 rounded-lg px-3 py-1.5">
+                      <span className={`font-medium ${(REC_STAGES.find(s => s.id === h.stage) || {}).text || "text-slate-700"}`}>{recStageLabel(h.stage)}</span>
+                      <span className="text-slate-400">{recFmtDate(h.date)} · {h.by}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <p className="text-xs text-slate-400">Added by {selCand.addedByName} · {recFmtDate(selCand.createdAt)}</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- App ----
 export default function App() {
   const [loaded, setLoaded] = useState(false);
@@ -2712,9 +3091,9 @@ export default function App() {
   const myEmailCount = emails.filter(e => (e.to || "").toLowerCase() === (me.email || "").toLowerCase()).length;
   const hasApprovedKRA = cycles.some(c => c.type === "Goal Setting" && (c.participants || []).includes(me.employeeId) && records[rKey(c.id, me.employeeId)]?.status === "Approved");
   const baseTabs = me.role === "hr"
-    ? [{ id: "home", label: "Home" }, { id: "cycles", label: "Cycles" }, { id: "approvals", label: "Approvals" }, { id: "users", label: "Users" }, { id: "reports", label: "Reports" }, { id: "templates", label: "Templates" }]
+    ? [{ id: "home", label: "Home" }, { id: "cycles", label: "Cycles" }, { id: "approvals", label: "Approvals" }, { id: "users", label: "Users" }, { id: "reports", label: "Reports" }, { id: "templates", label: "Templates" }, { id: "recruitment", label: "Recruitment" }]
     : me.role === "manager"
-      ? [{ id: "home", label: "Home" }, { id: "tasks", label: "My Tasks" }, { id: "team", label: "Team" }, { id: "completed", label: "Completed" }, ...(hasApprovedKRA ? [{ id: "mykra", label: "My KRA" }] : [])]
+      ? [{ id: "home", label: "Home" }, { id: "tasks", label: "My Tasks" }, { id: "team", label: "Team" }, { id: "completed", label: "Completed" }, ...(hasApprovedKRA ? [{ id: "mykra", label: "My KRA" }] : []), { id: "recruitment", label: "Recruitment" }]
       : [{ id: "home", label: "Home" }, { id: "tasks", label: "My Tasks" }, { id: "completed", label: "Completed" }, ...(hasApprovedKRA ? [{ id: "mykra", label: "My KRA" }] : [])];
   const tabs = [...baseTabs, { id: "inbox", label: `Inbox${myEmailCount ? ` (${myEmailCount})` : ""}` }];
 
@@ -2748,6 +3127,7 @@ export default function App() {
         {view === "inbox" && <InboxPage me={me} emails={emails} isHR={me.role === "hr"} />}
         {view === "reports" && <ReportsPage users={users} cycles={cycles} records={records} />}
         {view === "templates" && <EmailTemplatesPage templates={emailTemplates} onSave={saveTemplate} onReset={resetTemplate} onToggle={toggleTemplate} />}
+        {view === "recruitment" && <RecruitmentPage me={me} users={users} onSaved={onSaved} onError={showError} />}
       </main>
     </div>
   );
