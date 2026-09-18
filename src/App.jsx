@@ -2652,9 +2652,8 @@ function RecruitmentPage({ me, users, onSaved, onError }) {
               <div><label className="block text-xs font-medium text-slate-600 mb-1">Position Title *</label><input value={posForm.title} onChange={e => setPosForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g. Store Manager" className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition" /></div>
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="block text-xs font-medium text-slate-600 mb-1">Department *</label>
-                  <select value={posForm.department} onChange={e => setPosForm(f => ({ ...f, department: e.target.value }))} className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300">
-                    <option value="">Select…</option>{depts.map(d => <option key={d} value={d}>{d}</option>)}
-                  </select>
+                  <input value={posForm.department} onChange={e => setPosForm(f => ({ ...f, department: e.target.value }))} placeholder="e.g. Operations" list="rec-depts-list" className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition" />
+                  <datalist id="rec-depts-list">{depts.map(d => <option key={d} value={d} />)}</datalist>
                 </div>
                 <div><label className="block text-xs font-medium text-slate-600 mb-1">Location</label><input value={posForm.location} onChange={e => setPosForm(f => ({ ...f, location: e.target.value }))} placeholder="e.g. Chennai" className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition" /></div>
               </div>
